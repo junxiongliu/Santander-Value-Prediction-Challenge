@@ -1,0 +1,7 @@
+*.DS_Store
+*__pycache__*
+*.tar
+*.json
+*.ipynb_checkpoints
+*.csv
+*.zip
