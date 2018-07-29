@@ -245,9 +245,17 @@ out <- out_init %>%
   select(-starts_with("pred"))
 ```
 
+## manipulate the negative/very-low value(s) of final output:
+```{r}
+min(train_1$target)
+
+out <- out %>%
+  mutate(target = ifelse(target < min(train$target), min(train$target), target))
+```
+
 ## write out
 ```{r}
-write.csv(out, "../../data/predictions/predictions_rf_top50cor_stacked3.csv", 
+write.csv(out, "../../data/predictions/predictions_rf_top100cor_stacked3.csv", 
           row.names = FALSE)
 ```
 
