@@ -227,12 +227,6 @@ for (each in all_test_col){
 }
 ```
 
-## only select the columns in test
-```{r}
-all_f_notarget <- base:: setdiff(all_f, c("target"))
-test_selected <- test %>% select(ID, all_f_notarget)
-```
-
 ## now predict stuff
 ```{r}
 out_init <- test %>% 
