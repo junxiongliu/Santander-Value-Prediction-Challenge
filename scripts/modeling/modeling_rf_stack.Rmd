@@ -1,0 +1,289 @@
+---
+title: "Random Forest with stacking"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse=TRUE, prompt=TRUE, eval=TRUE, message=F, include=T,comment=NULL,fig.width = 5, warning = FALSE, fig.height = 3,tidy.opts=list(width.cutoff=50),tidy=TRUE,cache = TRUE)
+```
+
+```{r packageCheck, include=FALSE}
+mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "readr")  # what packages are needed?
+packs <- installed.packages()   # find installed package list
+install.me <- mypacks[!(mypacks %in% packs[,"Package"])]  #what needs to be installed?
+if (length(install.me) >= 1) install.packages(install.me, repos = "http://cran.us.r-project.org")   # install (if needed)
+lapply(mypacks, library, character.only=TRUE)  # load all packages
+```
+
+# Suggestion: Write functions to make this fully reproducible/easy-to-run.
+
+# A function to determine cv in partition
+```{r}
+CVInd <- function(n,K) { #n is sample size; K is number of parts; returns   K-length list of indices for each part
+  m<-floor(n/K) #approximate size of each part
+  r<-n-m*K
+  I<-sample(n,n) #random reordering of the indices
+  Ind<-list() #will be list of indices for all K parts
+  length(Ind)<-K
+  for (k in 1:K) {
+    if (k <= r) kpart <- ((m+1)*(k-1)+1):((m+1)*k)
+    else kpart<-((m+1)*r+m*(k-r-1)+1):((m+1)*r+m*(k-r))
+    Ind[[k]] <- I[kpart] #indices for kth part of data
+  }
+Ind
+}
+```
+
+# function to select based on correlation with response
+```{r}
+corr_selection <- function(data, features, response, topn){
+  # input data, vector of all features and response and topn correlations you want
+  # output dataframe with top selected features (and target)
+  cor_df <- data.frame(feature = character(), cor = double())
+  for (fea in features){
+    cur_cor <- cor(data[[response]], data[[fea]])
+    cur_row <- data.frame(feature = fea, cor = cur_cor)
+    cor_df <- rbind(cor_df, cur_row)
+  }
+  
+  cor_df_sorted <- cor_df %>% arrange(desc(abs(cor)))
+  cor_df_sorted_top <- cor_df_sorted %>% head(topn) # get top 
+  # select the features there
+  all_f <- c(as.vector(cor_df_sorted_top$feature), response)
+  data_small <- data %>% select(all_f)
+  return (data_small)
+}
+```
+
+# function to fit/tune random forest model
+```{r}
+my_rf <- function(data, response){
+  # input data, and response
+  # output the best random forest model
+  num_features <- ncol(data) - 1
+  cur_formula <- paste(response, "~.", sep = "")
+  
+  # two rounds of "tuning"
+  ## Round 1
+  ### initialize
+  mtrys <- seq(1,ceiling(num_features/5),3)
+  nsizes <- seq(1,num_features,5)
+  cur_best_mtry <- -1
+  cur_best_nsize <- -1
+  cur_best_r2 <- -1
+  
+  for (nsize in nsizes){
+    for (mt in mtrys){
+      set.seed(1)
+      rForest_1 <- randomForest(formula = as.formula(cur_formula), 
+                              data=data, mtry=mt, 
+                              ntree = 50,nodesize = nsize, 
+                              importance = FALSE) 
+      cur_avg_r2 <- mean(rForest_1$rsq)
+      if (cur_avg_r2 > cur_best_r2){
+        cur_best_mtry <- mt
+        cur_best_nsize <- nsize
+        cur_best_r2 <- cur_avg_r2
+      }
+    }
+  } 
+
+  ## Round 2
+  ### initialize
+  mtrys <- c(max((cur_best_mtry-2),1):(cur_best_mtry+2))
+  nsizes <- c(max((cur_best_nsize-4),1):(cur_best_nsize+4))
+  cur_best_mtry <- -1
+  cur_best_nsize <- -1
+  cur_best_r2 <- -1
+  
+  for (nsize in nsizes){
+    for (mt in mtrys){
+      set.seed(1)
+      rForest_1 <- randomForest(formula = as.formula(cur_formula), 
+                              data=data, mtry=mt, 
+                              ntree = 50,nodesize = nsize, 
+                              importance = FALSE) 
+      
+      cur_avg_r2 <- mean(rForest_1$rsq)
+      if (cur_avg_r2 > cur_best_r2){
+        cur_best_mtry <- mt
+        cur_best_nsize <- nsize
+        cur_best_r2 <- cur_avg_r2
+      }
+    }
+  }   
+  
+  ## Finally fit a best tree
+  rf_best_mtry <- cur_best_mtry
+  print (rf_best_mtry)
+  rf_best_nsize <- cur_best_nsize
+  print (rf_best_nsize)
+  rForest_best <- randomForest(formula = as.formula(cur_formula), 
+                        data=data, mtry=rf_best_mtry, 
+                        ntree = 1000,nodesize=rf_best_nsize, 
+                        importance=FALSE) 
+  
+  return (rForest_best)
+}
+```
+
+#-------------------------------------------------------
+# Now start operations:
+
+```{r}
+Sys.time()
+```
+
+## Read in train data
+```{r}
+train <- read.csv("../../data/raw/train.csv")
+train_1 <- train %>% 
+  select(-ID)
+```
+
+## Use top correlations to fit (stack)
+
+### general initialization
+```{r}
+num_top <- 100 # number of top for each round
+```
+
+### do round 1 of training fit
+```{r}
+num_top_1 <- num_top
+cur_response_1 <- "target"
+
+init_features_1 <- base::setdiff(names(train_1), c(cur_response_1))
+train_1_small <- corr_selection(train_1, init_features_1, 
+                                cur_response_1, num_top_1)
+rf_best_r1 <- my_rf(train_1_small, cur_response_1)
+
+# current r2 at this stage
+mean(rf_best_r1$rsq)
+```
+
+### do round 2: fit "residuals" (stacking)
+```{r}
+train_2 <- train_1 %>% 
+  mutate(error_r1 = target - predict(rf_best_r1)) %>%
+  select(-target)
+
+num_top_2 <- num_top
+cur_response_2 <- "error_r1"
+
+init_features_2 <- base::setdiff(names(train_2), c(cur_response_2))
+train_2_small <- corr_selection(train_2, init_features_2, 
+                                  cur_response_2, num_top_2)
+rf_best_r2 <- my_rf(train_2_small, cur_response_2)
+
+# current r2 at this stage
+mean(rf_best_r2$rsq)
+```
+
+### do round 3: fit "residuals" (stacking)
+```{r}
+train_3 <- train_2 %>% 
+  mutate(error_r2 = error_r1 - predict(rf_best_r2)) %>%
+  select(-error_r1)
+
+num_top_3 <- num_top
+cur_response_3 <- "error_r2"
+
+init_features_3 <- base::setdiff(names(train_3), c(cur_response_3))
+train_3_small <- corr_selection(train_3, init_features_3, 
+                                  cur_response_3, num_top_3)
+rf_best_r3 <- my_rf(train_3_small, cur_response_3)
+
+# current r2 at this stage
+mean(rf_best_r3$rsq)
+```
+
+```{r}
+Sys.time()
+```
+
+## Read in the test set and predict
+```{r}
+test <- read_csv("../../data/raw/test.csv")
+```
+
+## let the test column match the train column
+### note: if the test column starts with a number, will add an x to let it match the train columns
+```{r}
+all_test_col <- names(test)
+all_test_col_new <- c() # new ones
+
+for (each in all_test_col){
+  each_new <- each
+  
+  if (is.na(as.numeric(substring(each, 1, 1))) == FALSE){ 
+    # this col starts with a number
+    each_new <- paste("X", each, sep = "")
+  }
+  all_test_col_new <- c(all_test_col_new, each_new)
+  colnames(test)[which(names(test) == each)] <- each_new
+}
+```
+
+## only select the columns in test
+```{r}
+all_f_notarget <- base:: setdiff(all_f, c("target"))
+test_selected <- test %>% select(ID, all_f_notarget)
+```
+
+## now predict stuff
+```{r}
+out_init <- test %>% 
+  mutate(pred_m1 = predict(rf_best_r1, newdata = test),
+         pred_m2 = predict(rf_best_r2, newdata = test),
+         pred_m3 = predict(rf_best_r3, newdata = test),
+         # .....
+         target = pred_m1 + pred_m2 + pred_m3) %>%
+  select(ID, 
+         pred_m1,
+         pred_m2,
+         pred_m3,
+         target) # for view
+
+out <- out_init %>% 
+  select(-starts_with("pred"))
+```
+
+## write out
+```{r}
+write.csv(out, "../../data/predictions/predictions_rf_top50cor_stacked3.csv", 
+          row.names = FALSE)
+```
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#### archived
+```{r}
+# stackoverflow: https://stackoverflow.com/questions/18275639/remove-highly-correlated-variables
+# tmp <- cor(train_top_cor)
+# tmp[upper.tri(tmp)] <- 0
+# diag(tmp) <- 0
+
+# train_top_decor <- train_top_cor[,!apply(tmp,2,function(x) any(abs(x) > 0.6))]
+```
+
+
+
