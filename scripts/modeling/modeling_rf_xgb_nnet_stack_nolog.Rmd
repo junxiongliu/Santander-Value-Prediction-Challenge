@@ -1,8 +1,8 @@
 ---
-title: "Random Forest with stacking"
-output:
-  pdf_document: default
-  html_document: default
+title: "modeling_rf_xgb_nnet_stack"
+author: "Junxiong Liu"
+date: "July 29, 2018"
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
@@ -10,7 +10,7 @@ knitr::opts_chunk$set(collapse=TRUE, prompt=TRUE, eval=TRUE, message=F, include=
 ```
 
 ```{r packageCheck, include=FALSE}
-mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "readr")  # what packages are needed?
+mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "xgboost","readr")  # what packages are needed?
 packs <- installed.packages()   # find installed package list
 install.me <- mypacks[!(mypacks %in% packs[,"Package"])]  #what needs to be installed?
 if (length(install.me) >= 1) install.packages(install.me, repos = "http://cran.us.r-project.org")   # install (if needed)
@@ -21,9 +21,13 @@ lapply(mypacks, library, character.only=TRUE)  # load all packages
 
 # Read in help functions
 ```{r}
-source("all_functions.R")
+source("preparation&cleaning_functions.R")
+source("modeling_functions.R")
 ```
 
+# this script yet to be improved 
+- need to add nnet
+- need to improve the methods of ensembing different models at each stack, rather than just assigning the same weights (maybe use linear regression?)
 
 #-------------------------------------------------------
 # Now start operations:
@@ -58,20 +62,24 @@ train_gc_s2 <- train_gc_s1 %>% select(to_select)
 Sys.time()
 ```
 
-
 #-------------------------------------------------------
 ## Response-related and fit
 
 ### general initialization
 ```{r}
 num_top <- 100 # number of top for each round
+# num_top <- 200
 # num_top <- 300 # updated
 # num_top <- 30
 train_1 <- train_gc_s2
+
+# remove unnecessary dataframes to save some space
+rm(train_gc_s1, temp, train_gc_s2, train_noid)
 ```
 
 ### do round 1 of training fit
 ```{r}
+# initialize for round 1
 num_top_1 <- num_top
 cur_response_1 <- "target"
 
@@ -82,60 +90,73 @@ init_features_1 <- base::setdiff(names(train_1), c(cur_response_1))
 train_1_small <- rf_selection(train_1, init_features_1, 
                                 cur_response_1, num_top_1)
 
+# random forest fit
 rf_best_r1 <- my_rf(train_1_small, cur_response_1)
-
 # current r2 at this stage
-mean(rf_best_r1$rsq)
+# mean(rf_best_r1$rsq)
+
+# xgboost fit
+dtrain_r1 <- xgb.DMatrix(as.matrix(train_1_small[, init_features_1]), 
+                         label=train_1_small[,cur_response_1])
+xgb_best_r1 <- my_xgb(dtrain_r1)
+dfit_r1 <- xgb.DMatrix(as.matrix(train_1_small[, init_features_1]))
+Sys.time()
 ```
 
 ### do round 2: fit "residuals" (stacking)
 ```{r}
+# "half" xgb and "half" random forest
 train_2 <- train_1 %>% 
-  mutate(error_r1 = target - predict(rf_best_r1)) %>%
+  mutate(error_r1 = target - 
+           (0.5*predict(rf_best_r1) + 0.5*predict(xgb_best_r1, dfit_r1))) %>%
   select(-target)
 
+# initialize for Round 2
 num_top_2 <- num_top
 cur_response_2 <- "error_r1"
-
 init_features_2 <- base::setdiff(names(train_2), c(cur_response_2))
-# train_2_small <- corr_selection(train_2, init_features_2, 
-#                                  cur_response_2, num_top_2)
-
 train_2_small <- rf_selection(train_2, init_features_2, 
                                 cur_response_2, num_top_2)
 
+# Random Forest fit
 rf_best_r2 <- my_rf(train_2_small, cur_response_2)
 
-# current r2 at this stage
-mean(rf_best_r2$rsq)
+# xgboost fit
+dtrain_r2 <- xgb.DMatrix(as.matrix(train_2_small[, init_features_2]), 
+                         label=train_2_small[,cur_response_2])
+xgb_best_r2 <- my_xgb(dtrain_r2)
+dfit_r2 <- xgb.DMatrix(as.matrix(train_2_small[, init_features_2]))
+Sys.time()
 ```
 
 ### do round 3: fit "residuals" (stacking)
 ```{r}
-train_3 <- train_2 %>% 
-  mutate(error_r2 = error_r1 - predict(rf_best_r2)) %>%
+train_3 <- train_3 %>% 
+  mutate(error_r2 = error_r1 - 
+           (0.5*predict(rf_best_r2) + 0.5*predict(xgb_best_r2, dfit_r2))) %>%
   select(-error_r1)
 
+# Initialize for Round 3
 num_top_3 <- num_top
 cur_response_3 <- "error_r2"
-
 init_features_3 <- base::setdiff(names(train_3), c(cur_response_3))
-# train_3_small <- corr_selection(train_3, init_features_3, 
-#                                   cur_response_3, num_top_3)
-
 train_3_small <- rf_selection(train_3, init_features_3, 
                                 cur_response_3, num_top_3)
 
+# random forest fit
 rf_best_r3 <- my_rf(train_3_small, cur_response_3)
-
 # current r2 at this stage
-mean(rf_best_r3$rsq)
-```
+# mean(rf_best_r3$rsq)
 
-```{r}
+# xgboost fit
+dtrain_r3 <- xgb.DMatrix(as.matrix(train_3_small[, init_features_3]), 
+                         label=train_3_small[,cur_response_3])
+xgb_best_r3 <- my_xgb(dtrain_r3)
+dfit_r3 <- xgb.DMatrix(as.matrix(train_3_small[, init_features_3]))
 Sys.time()
 ```
 
+##----------------------------------------------------------------
 ## Read in the test set and predict
 ```{r}
 test <- read_csv("../../data/raw/test.csv")
@@ -159,12 +180,21 @@ for (each in all_test_col){
 }
 ```
 
+
 ## now predict stuff
 ```{r}
+## for xgboost
+dtest_r1 <- xgb.DMatrix(as.matrix(test[, init_features_1]))
+dtest_r2 <- xgb.DMatrix(as.matrix(test[, init_features_2]))
+dtest_r3 <- xgb.DMatrix(as.matrix(test[, init_features_3]))
+
 out_init <- test %>% 
-  mutate(pred_m1 = predict(rf_best_r1, newdata = test),
-         pred_m2 = predict(rf_best_r2, newdata = test),
-         pred_m3 = predict(rf_best_r3, newdata = test),
+  mutate(pred_m1 = 0.5*predict(rf_best_r1, newdata = test)+
+           0.5*predict(xgb_best_r1, dtest_r1),
+         pred_m2 = 0.5*predict(rf_best_r2, newdata = test)+
+           0.5*predict(xgb_best_r2, dtest_r2),
+         pred_m3 = 0.5*predict(rf_best_r3, newdata = test)+
+           0.5*predict(xgb_best_r3, dtest_r3),
          # .....
          target = pred_m1 + pred_m2 + pred_m3) %>%
   select(ID, 
@@ -179,38 +209,18 @@ out <- out_init %>%
 
 ## manipulate the negative/very-low value(s) of final output:
 ```{r}
-min(train_1$target)
-max(train_1$target)
-
+# fill in <0 as 0
 out <- out %>%
-  mutate(target = ifelse(target < min(train$target), min(train$target), target))
+  mutate(target = ifelse(target < 0, 0, target))
 ```
 
 ## write out
 ```{r}
-write.csv(out, "../../data/predictions/predictions_rf_top300cor_stacked3.csv", 
+write.csv(out, "../../data/predictions/predictions_rf_top100rfxgb_stacked3.csv", 
           row.names = FALSE)
 ```
 
 
 ```{r}
-
+Sys.time()
 ```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
