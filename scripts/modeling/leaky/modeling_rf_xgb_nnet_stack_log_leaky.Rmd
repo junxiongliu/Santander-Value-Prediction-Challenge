@@ -1,8 +1,8 @@
 ---
-title: "Random Forest with stacking"
-output:
-  pdf_document: default
-  html_document: default
+title: "modeling_rf_xgb_nnet_stack_log"
+author: "Junxiong Liu"
+date: "July 29, 2018"
+output: html_document
 ---
 
 ```{r setup, include=FALSE}
@@ -19,10 +19,12 @@ lapply(mypacks, library, character.only=TRUE)  # load all packages
 
 # Suggestion: Write functions to make this fully reproducible/easy-to-run.
 
+# to be done: leaky stuff experiments get higher priority
+
 # Read in help functions
 ```{r}
-source("preparation&cleaning_functions.R")
-source("modeling_functions.R")
+source("../help_functions/preparation&cleaning_functions.R")
+source("../help_functions/modeling_functions.R")
 ```
 
 # logged response
@@ -33,7 +35,7 @@ source("modeling_functions.R")
 ## Read in train data
 ```{r}
 Sys.time()
-train <- read.csv("../../data/raw/train.csv")
+train <- read.csv("../../../data/raw/train.csv")
 train_noid <- train %>% 
   select(-ID) %>%
   mutate(target = log(target))
@@ -87,6 +89,15 @@ rf_best_r1 <- my_rf(train_1_small, cur_response_1)
 mean(rf_best_r1$rsq)
 ```
 
+
+#----------------
+### xgb here
+
+
+
+
+
+
 ### do round 2: fit "residuals" (stacking)
 ```{r}
 train_2 <- train_1 %>% 
@@ -132,7 +143,7 @@ Sys.time()
 
 ## Read in the test set and predict
 ```{r}
-test <- read_csv("../../data/raw/test.csv")
+test <- read_csv("../../../data/raw/test.csv")
 ```
 
 ## let the test column match the train column

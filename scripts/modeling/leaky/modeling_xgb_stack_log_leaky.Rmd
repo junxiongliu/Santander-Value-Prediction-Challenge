@@ -1,0 +1,233 @@
+---
+title: "modeling_rf_xgb_nnet_stack_log"
+author: "Junxiong Liu"
+date: "July 29, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse=TRUE, prompt=TRUE, eval=TRUE, message=F, include=T,comment=NULL,fig.width = 5, warning = FALSE, fig.height = 3,tidy.opts=list(width.cutoff=50),tidy=TRUE,cache = TRUE)
+```
+
+```{r packageCheck, include=FALSE}
+mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "xgboost","readr")  # what packages are needed?
+packs <- installed.packages()   # find installed package list
+install.me <- mypacks[!(mypacks %in% packs[,"Package"])]  #what needs to be installed?
+if (length(install.me) >= 1) install.packages(install.me, repos = "http://cran.us.r-project.org")   # install (if needed)
+lapply(mypacks, library, character.only=TRUE)  # load all packages
+```
+
+# Suggestion: Write functions to make this fully reproducible/easy-to-run.
+
+# to be done: leaky stuff experiments get higher priority
+
+# Read in help functions
+```{r}
+source("../help_functions/preparation&cleaning_functions.R")
+source("../help_functions/modeling_functions.R")
+```
+
+# logged response -- stack xgboost only (vertical)
+
+#-------------------------------------------------------
+# Now start operations:
+
+## Read in train data
+
+### train on non-leaky: LB score 0.74
+```{r}
+Sys.time()
+
+# just use only non-leaky portion to train and predict non-leaky test
+train <- read.csv("../../../data/cleaned/leaky_combined_0730/train_noleak.csv")
+
+# still use the whole "train" to train.
+# train <- read.csv("../../../data/raw/train.csv")
+
+train_noid <- train %>% 
+  select(-ID) %>%
+  mutate(target = log(target))
+Sys.time()
+```
+
+#-------------------------------------------------------
+## General Cleaning: Data Quality/Unsupervised method (non-response related)
+
+### General Cleaning (gc) step 1: get rid of invalid features (min=max)
+```{r}
+Sys.time()
+train_gc_s1 <- noVariation_filter(train_noid)
+Sys.time()
+```
+
+### General Cleaning (gc) step 2: get rid of highly correlated features
+```{r}
+Sys.time()
+temp <- train_gc_s1 %>% select(-target)
+threshold <- 0.95 # get rid of > 0.95 correlations
+decorr_feas <- collinear_filter(temp, threshold)
+to_select <- c(decorr_feas, "target")
+train_gc_s2 <- train_gc_s1 %>% select(to_select)
+Sys.time()
+```
+
+#-------------------------------------------------------
+## Response-related and fit
+
+### general initialization
+```{r}
+# num_top <- 100 # number of top for each round
+# num_top <- 200
+num_top <- 500 # updated
+# num_top <- 30
+train_1 <- train_gc_s2
+```
+
+### do round 1 of training fit
+```{r}
+Sys.time()
+
+# Initialize
+num_top_1 <- num_top
+cur_response_1 <- "target"
+train_1_small <- rf_selection(train_1, init_features_1, 
+                                cur_response_1, num_top_1)
+init_features_1 <- base::setdiff(names(train_1_small), c(cur_response_1))
+
+# xgboost fit
+dtrain_r1 <- xgb.DMatrix(as.matrix(train_1_small[, init_features_1]), 
+                         label=train_1_small[,cur_response_1])
+xgb_best_r1 <- my_xgb(dtrain_r1)
+dfit_r1 <- xgb.DMatrix(as.matrix(train_1_small[, init_features_1]))
+Sys.time()
+```
+
+### do round 2: fit "residuals" (stacking)
+```{r}
+train_2 <- train_1 %>% 
+  mutate(error_r1 = target - predict(xgb_best_r1, dfit_r1)) %>%
+  select(-target)
+
+# initialize for Round 2
+num_top_2 <- num_top
+cur_response_2 <- "error_r1"
+train_2_small <- rf_selection(train_2, init_features_2, 
+                                cur_response_2, num_top_2)
+init_features_2 <- base::setdiff(names(train_2_small), c(cur_response_2))
+
+# xgboost fit
+dtrain_r2 <- xgb.DMatrix(as.matrix(train_2_small[, init_features_2]), 
+                         label=train_2_small[,cur_response_2])
+xgb_best_r2 <- my_xgb(dtrain_r2)
+dfit_r2 <- xgb.DMatrix(as.matrix(train_2_small[, init_features_2]))
+Sys.time()
+```
+
+### do round 3: fit "residuals" (stacking)
+```{r}
+train_3 <- train_2 %>% 
+  mutate(error_r2 = error_r1 - predict(xgb_best_r2, dfit_r2)) %>%
+  select(-error_r1)
+
+# Initialize for Round 3
+num_top_3 <- num_top
+cur_response_3 <- "error_r2"
+train_3_small <- rf_selection(train_3, init_features_3, 
+                                cur_response_3, num_top_3)
+init_features_3 <- base::setdiff(names(train_3_small), c(cur_response_3))
+
+# xgboost fit
+dtrain_r3 <- xgb.DMatrix(as.matrix(train_3_small[, init_features_3]), 
+                         label=train_3_small[,cur_response_3])
+xgb_best_r3 <- my_xgb(dtrain_r3)
+dfit_r3 <- xgb.DMatrix(as.matrix(train_3_small[, init_features_3]))
+Sys.time()
+```
+
+##----------------------------------------------------------------
+## Read in the test set and predict
+```{r}
+test <- read_csv("../../../data/cleaned/leaky_combined_0730/test_noleak.csv")
+test_leaky <- read_csv("../../../data/cleaned/leaky_combined_0730/test_leak.csv")
+```
+
+## let the test column match the train column
+### note: if the test column starts with a number, will add an x to let it match the train columns
+```{r}
+all_test_col <- names(test)
+all_test_col_new <- c() # new ones
+
+for (each in all_test_col){
+  each_new <- each
+  
+  if (is.na(as.numeric(substring(each, 1, 1))) == FALSE){ 
+    # this col starts with a number
+    each_new <- paste("X", each, sep = "")
+  }
+  all_test_col_new <- c(all_test_col_new, each_new)
+  colnames(test)[which(names(test) == each)] <- each_new
+}
+```
+
+## now predict stuff
+```{r}
+## for xgboost
+dtest_r1 <- xgb.DMatrix(as.matrix(test[, init_features_1]))
+dtest_r2 <- xgb.DMatrix(as.matrix(test[, init_features_2]))
+dtest_r3 <- xgb.DMatrix(as.matrix(test[, init_features_3]))
+
+out_init <- test %>% 
+  mutate(pred_m1 = predict(xgb_best_r1, dtest_r1),
+         pred_m2 = predict(xgb_best_r2, dtest_r2),
+         pred_m3 = predict(xgb_best_r3, dtest_r3),
+         # .....
+         target = pred_m1 + pred_m2 + pred_m3) %>% 
+        # this target needs to be exponential
+  select(ID, 
+         pred_m1,
+         pred_m2,
+         pred_m3,
+         target) # for view
+
+out <- out_init %>% 
+  mutate(target = exp(target)) %>% # get the exponential
+  select(-starts_with("pred"))
+```
+
+## combine with test_leaky
+```{r}
+test_leaky_out <- test_leaky %>% 
+  select(ID, compiled_leak) %>%
+  rename(target = compiled_leak)
+
+final_out <- bind_rows(out, test_leaky_out)
+```
+
+## write out
+```{r}
+write.csv(final_out, "../../../data/predictions/lk_predictions_xgb_top500rf_stacked3_logr_trainlk.csv", 
+          row.names = FALSE)
+```
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
