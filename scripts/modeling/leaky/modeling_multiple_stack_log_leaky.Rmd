@@ -1,5 +1,5 @@
 ---
-title: "modeling_rf_xgb_nnet_stack_log"
+title: "modeling_multiple_stack_log"
 author: "Junxiong Liu"
 date: "July 29, 2018"
 output: html_document
@@ -173,7 +173,7 @@ train_1_small_3 <- train_1_small_2 %>%
 ensemble_features_1 <- c("r1_pred_xgb", "r1_pred_rf", "r1_pred_knn", "r1_pred_lm", "r1_pred_ridge") #,...)
 dtrain_ens_r1 <- xgb.DMatrix(as.matrix(train_1_small_3[, ensemble_features_1]), 
                          label=train_1_small_3[,cur_response_1]) # still same target
-xgb_best_ens_r1 <- my_xgb(dtrain_ens_r1, depth = 100000, lr = 0.03, es = 10) 
+xgb_best_ens_r1 <- my_xgb(dtrain_ens_r1, depth = 100000, lr = 0.01, es = 5) 
 
 # will need a super deep tree to accomodate small learning rate (i.e. 0.001) 
 
@@ -189,6 +189,9 @@ xgb_best_ens_r1 <- my_xgb(dtrain_ens_r1, depth = 100000, lr = 0.03, es = 10)
 
 # ensemble xgboost, rf, knn, and lm(stepwise)
 ## ~0.687 rmse
+
+# ensemble xgboost, rf, knn, and lm, ridge(stepwise)
+## ~0.679 rmse
 
 # for next level/checking "overall" training rmse
 dfit_ens_r1 <- xgb.DMatrix(as.matrix(train_1_small_3[, ensemble_features_1])) # fit on train for prediction
@@ -223,6 +226,7 @@ nrow(train_check_new)
 eval(train_check_new, "final_predicted", "target", nrow(train_check)) 
 ### 0.388 -- will be most ideal case (~60 feas, 2ens)
 ### 0.387 -- 110 feas 2 ens
+### ~0.305 -- 110 feas with 5 ens (except for nnet)
 ```
 
 
@@ -263,7 +267,8 @@ test_r1_ind_res <- test %>%
   mutate(r1_pred_xgb = predict(xgb_best_r1, dtest_r1),
          r1_pred_rf = predict(rf_best_r1, newdata = test_r1),
          r1_pred_knn = predict(knn_best_r1, newdata = test_r1),
-         r1_pred_lm = predict(lm_best_r1, newdata = test_r1))
+         r1_pred_lm = predict(lm_best_r1, newdata = test_r1),
+         r1_pred_ridge = predict(ridge_best_r1, newdata = test_r1))
 
 ## ensemble results round 1
 dtest_r1_ens <- xgb.DMatrix(as.matrix(test_r1_ind_res[, ensemble_features_1]))
@@ -274,6 +279,7 @@ test_r1_ens <- test_r1_ind_res %>%
          r1_pred_rf,
          r1_pred_knn,
          r1_pred_lm,
+         r1_pred_ridge,
          #....,
          target) # for view
 
@@ -294,7 +300,7 @@ final_out <- bind_rows(out, test_leaky_out)
 
 ## write out
 ```{r}
-write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainwhole_top100rf_rfxgbens_fullTuned.csv", 
+write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainwhole_top100rf_5ens_fullTuned.csv", 
           row.names = FALSE)
 ```
 
