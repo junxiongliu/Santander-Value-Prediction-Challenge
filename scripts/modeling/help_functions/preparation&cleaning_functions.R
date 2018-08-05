@@ -25,6 +25,7 @@ noVariation_filter <- function(data){
 
 ##--------------------------------------------------------------------
 ## function to check highly collinear columns and get rid of such
+### NOTE: This function will filter out BOTH pairs... should not use...
 ### stackoverflow: https://stackoverflow.com/questions/18275639/remove-highly-correlated-variables
 collinear_filter <- function(data, threshold){
   # plug in data you need check correlation and threshold of high correlation elimination
@@ -61,8 +62,8 @@ corr_selection <- function(data, features, response, topn){
 
 ##--------------------------------------------------------------------
 ## function to select based on random forest importance
-rf_selection <- function(data, features, response, topn){
-  # input data, vector of all features and response and topn correlations you want
+rf_selection <- function(data, response, topn){
+  # input data, vector of response (will be against all features) and topn correlations you want
   # output dataframe with top selected features (and target)
   
   cur_formula <- paste(response, "~.", sep = "")
@@ -83,5 +84,50 @@ rf_selection <- function(data, features, response, topn){
   return (data_small)
 }
 
+##--------------------------------------------------------------------
+## function to do "row-wise" feature engineering
+rw_fea_engineering <- function(data, response = ""){
+  # input data and all the features
+  # output data + all features + engineered features + target
+  # assuming no NAs in any of features
+  
+  
+  # separate out the response dataframe (only needed for training)
+  if (response != ""){
+    target_join <- data %>% select(!!sym(response)) %>% mutate(row_num = row_number()) 
+    data <- data %>% select(-!!sym(response))
+  }
+  
+  # generate new features with features dataframe
+  data_w_features <- data %>% 
+    mutate(rowMean = rowMeans(.),
+           rowMedian = apply(., 1, median), # , na.rm=TRUE
+           rowMax = apply(., 1, max),
+           rowMin = apply(., 1, min),
+           rowMean_n0 = apply(.,1, function(x) mean(x[x!=0])), # non-zero mean
+           rowMin_n0 = apply(.,1, function(x) min(x[x!=0])), # non-zero min (will produce some inf)
+           rowMedian_n0 = apply(.,1, function(x) median(x[x!=0])), # non-zero min           
+           count_n0 = apply(.,1, function(x) length(x[x!=0])) # count of non-zeros
+           # -- can have more..
+           ) %>%
+    replace(., is.na(.), -1) %>% # replace NA with -1
+    mutate(row_num = row_number())
+  
+  data_w_features[mapply(is.infinite, data_w_features)] <- -1 # replace infinite with -1
+  
+  # join back response and return
+  if (response != ""){ # for training frame
+    data_return <- data_w_features %>% left_join(target_join, by = "row_num") %>% select(-row_num)
+  }else { # for testing frame
+    data_return <- data_w_features %>% select(-row_num)
+  }
+  return (data_return)
+}
 
-
+##--------------------------------------------------------------------
+# evaluation function (calculating rmse)
+eval <- function(data, pred, actual){
+  data <- data %>% mutate(diff_2 = (!!sym(pred) - !!sym(actual))**2)
+  rmse <- sqrt(sum(data$diff_2)/nrow(data))
+  return (rmse)
+}

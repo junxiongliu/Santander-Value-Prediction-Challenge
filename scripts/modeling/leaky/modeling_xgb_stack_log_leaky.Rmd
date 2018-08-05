@@ -10,7 +10,7 @@ knitr::opts_chunk$set(collapse=TRUE, prompt=TRUE, eval=TRUE, message=F, include=
 ```
 
 ```{r packageCheck, include=FALSE}
-mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "xgboost","readr")  # what packages are needed?
+mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "xgboost","readr", "rlang")  # what packages are needed?
 packs <- installed.packages()   # find installed package list
 install.me <- mypacks[!(mypacks %in% packs[,"Package"])]  #what needs to be installed?
 if (length(install.me) >= 1) install.packages(install.me, repos = "http://cran.us.r-project.org")   # install (if needed)
@@ -18,8 +18,6 @@ lapply(mypacks, library, character.only=TRUE)  # load all packages
 ```
 
 # Suggestion: Write functions to make this fully reproducible/easy-to-run.
-
-# to be done: leaky stuff experiments get higher priority
 
 # Read in help functions
 ```{r}
@@ -29,20 +27,32 @@ source("../help_functions/modeling_functions.R")
 
 # logged response -- stack xgboost only (vertical)
 
+#### 08/04 updates: generate some new features after initial feature selection; change xgb fit function a bit
+
+#### general guidelines: decrease learning rate (and potentially increase depth of tree) as the stacking rounds get higher; currenr learning rate is already super small, though.
+
+#### may currently focus on using whole train
+
 #-------------------------------------------------------
 # Now start operations:
 
 ## Read in train data
 
-### train on non-leaky: LB score 0.74
+## with original problematic collinear filtering funcs (and part of train):
+### train on non-leaky: LB score 0.74 (500 features)
+### train on non-leaky: better tuned (100 features) -- LB score 0.70 -- Note: stack 2 and stack 3 got same results in LB (-- THIS KIND OF "VERTICAL" stacking of xgboost might overfit? -- hard to tell)
+
+
+
+
 ```{r}
 Sys.time()
 
 # just use only non-leaky portion to train and predict non-leaky test
-train <- read.csv("../../../data/cleaned/leaky_combined_0730/train_noleak.csv")
+# train <- read.csv("../../../data/cleaned/leaky_combined_0730/train_noleak.csv")
 
 # still use the whole "train" to train.
-# train <- read.csv("../../../data/raw/train.csv")
+train <- read.csv("../../../data/raw/train.csv")
 
 train_noid <- train %>% 
   select(-ID) %>%
@@ -60,15 +70,16 @@ train_gc_s1 <- noVariation_filter(train_noid)
 Sys.time()
 ```
 
-### General Cleaning (gc) step 2: get rid of highly correlated features
+### General Cleaning (gc) step 2: get rid of highly correlated features (disabled)
+### UPDATE: need to disable this... currently filtering out both highly collinear..
 ```{r}
-Sys.time()
-temp <- train_gc_s1 %>% select(-target)
-threshold <- 0.95 # get rid of > 0.95 correlations
-decorr_feas <- collinear_filter(temp, threshold)
-to_select <- c(decorr_feas, "target")
-train_gc_s2 <- train_gc_s1 %>% select(to_select)
-Sys.time()
+# Sys.time()
+# temp <- train_gc_s1 %>% select(-target)
+# threshold <- 0.95 # get rid of > 0.95 correlations
+# decorr_feas <- collinear_filter(temp, threshold)
+# to_select <- c(decorr_feas, "target")
+# train_gc_s2 <- train_gc_s1 %>% select(to_select)
+# Sys.time()
 ```
 
 #-------------------------------------------------------
@@ -76,11 +87,13 @@ Sys.time()
 
 ### general initialization
 ```{r}
-# num_top <- 100 # number of top for each round
+# note: if num_top gets bigger, tune my_xgb parameters to get the balance between accuracy and training time
+num_top <- 100 # number of top for each round
 # num_top <- 200
-num_top <- 500 # updated
-# num_top <- 30
-train_1 <- train_gc_s2
+# num_top <- 500 # updated
+# num_top <- 50
+# train_1 <- train_gc_s2
+train_1 <- train_gc_s1
 ```
 
 ### do round 1 of training fit
@@ -90,15 +103,19 @@ Sys.time()
 # Initialize
 num_top_1 <- num_top
 cur_response_1 <- "target"
-train_1_small <- rf_selection(train_1, init_features_1, 
-                                cur_response_1, num_top_1)
-init_features_1 <- base::setdiff(names(train_1_small), c(cur_response_1))
+train_1_small_1 <- rf_selection(train_1, cur_response_1, num_top_1)
+rf_features_1 <- base::setdiff(names(train_1_small_1), c(cur_response_1)) # for testing correspondence
+
+# row-wise feature engineering
+train_1_small_2 <- rw_fea_engineering(train_1_small_1, cur_response_1)
+# get final features
+init_features_1 <- base::setdiff(names(train_1_small_2), c(cur_response_1))
 
 # xgboost fit
-dtrain_r1 <- xgb.DMatrix(as.matrix(train_1_small[, init_features_1]), 
-                         label=train_1_small[,cur_response_1])
+dtrain_r1 <- xgb.DMatrix(as.matrix(train_1_small_2[, init_features_1]), 
+                         label=train_1_small_2[,cur_response_1])
 xgb_best_r1 <- my_xgb(dtrain_r1)
-dfit_r1 <- xgb.DMatrix(as.matrix(train_1_small[, init_features_1]))
+dfit_r1 <- xgb.DMatrix(as.matrix(train_1_small_2[, init_features_1]))
 Sys.time()
 ```
 
@@ -111,15 +128,18 @@ train_2 <- train_1 %>%
 # initialize for Round 2
 num_top_2 <- num_top
 cur_response_2 <- "error_r1"
-train_2_small <- rf_selection(train_2, init_features_2, 
-                                cur_response_2, num_top_2)
-init_features_2 <- base::setdiff(names(train_2_small), c(cur_response_2))
+train_2_small_1 <- rf_selection(train_2, cur_response_2, num_top_2)
+rf_features_2 <- base::setdiff(names(train_2_small_1), c(cur_response_2)) # for testing correspondence
+
+# row-wise feature engineering
+train_2_small_2 <- rw_fea_engineering(train_2_small_1, cur_response_2)
+init_features_2 <- base::setdiff(names(train_2_small_2), c(cur_response_2))
 
 # xgboost fit
-dtrain_r2 <- xgb.DMatrix(as.matrix(train_2_small[, init_features_2]), 
-                         label=train_2_small[,cur_response_2])
+dtrain_r2 <- xgb.DMatrix(as.matrix(train_2_small_2[, init_features_2]), 
+                         label=train_2_small_2[,cur_response_2])
 xgb_best_r2 <- my_xgb(dtrain_r2)
-dfit_r2 <- xgb.DMatrix(as.matrix(train_2_small[, init_features_2]))
+dfit_r2 <- xgb.DMatrix(as.matrix(train_2_small_2[, init_features_2]))
 Sys.time()
 ```
 
@@ -132,15 +152,18 @@ train_3 <- train_2 %>%
 # Initialize for Round 3
 num_top_3 <- num_top
 cur_response_3 <- "error_r2"
-train_3_small <- rf_selection(train_3, init_features_3, 
-                                cur_response_3, num_top_3)
-init_features_3 <- base::setdiff(names(train_3_small), c(cur_response_3))
+train_3_small_1 <- rf_selection(train_3, cur_response_3, num_top_3)
+rf_features_3 <- base::setdiff(names(train_3_small_1), c(cur_response_3)) # for testing correspondence
+
+# row-wise feature engineering
+train_3_small_2 <- rw_fea_engineering(train_3_small_1, cur_response_3)
+init_features_3 <- base::setdiff(names(train_3_small_2), c(cur_response_3))
 
 # xgboost fit
-dtrain_r3 <- xgb.DMatrix(as.matrix(train_3_small[, init_features_3]), 
-                         label=train_3_small[,cur_response_3])
+dtrain_r3 <- xgb.DMatrix(as.matrix(train_3_small_2[, init_features_3]), 
+                         label=train_3_small_2[,cur_response_3])
 xgb_best_r3 <- my_xgb(dtrain_r3)
-dfit_r3 <- xgb.DMatrix(as.matrix(train_3_small[, init_features_3]))
+dfit_r3 <- xgb.DMatrix(as.matrix(train_3_small_2[, init_features_3]))
 Sys.time()
 ```
 
@@ -172,16 +195,19 @@ for (each in all_test_col){
 ## now predict stuff
 ```{r}
 ## for xgboost
-dtest_r1 <- xgb.DMatrix(as.matrix(test[, init_features_1]))
-dtest_r2 <- xgb.DMatrix(as.matrix(test[, init_features_2]))
-dtest_r3 <- xgb.DMatrix(as.matrix(test[, init_features_3]))
+test_r1 <- rw_fea_engineering(test[,rf_features_1]) # generate the row-wise features for test
+dtest_r1 <- xgb.DMatrix(as.matrix(test_r1[, init_features_1]))
+test_r2 <- rw_fea_engineering(test[,rf_features_2])
+dtest_r2 <- xgb.DMatrix(as.matrix(test_r2[, init_features_2]))
+test_r3 <- rw_fea_engineering(test[,rf_features_3])
+dtest_r3 <- xgb.DMatrix(as.matrix(test_r3[, init_features_3]))
 
 out_init <- test %>% 
   mutate(pred_m1 = predict(xgb_best_r1, dtest_r1),
          pred_m2 = predict(xgb_best_r2, dtest_r2),
          pred_m3 = predict(xgb_best_r3, dtest_r3),
          # .....
-         target = pred_m1 + pred_m2 + pred_m3) %>% 
+         target = pred_m1) %>% #  + pred_m2 + pred_m3 ## only use stack1 -- check possible overshooting 
         # this target needs to be exponential
   select(ID, 
          pred_m1,
@@ -205,13 +231,15 @@ final_out <- bind_rows(out, test_leaky_out)
 
 ## write out
 ```{r}
-write.csv(final_out, "../../../data/predictions/lk_predictions_xgb_top500rf_stacked3_logr_trainlk.csv", 
+write.csv(final_out, "../../../data/predictions/lk_predictions/xgb_top100rf_stacked1_logr_trainlk_feng_tuned.csv", 
           row.names = FALSE)
 ```
 
 
 ```{r}
-
+temp <- train_1_small_2 %>% 
+  mutate(pred_1 = predict(xgb_best_r1, dtrain_r1)) %>%
+  select(pred_1, target)
 ```
 
 

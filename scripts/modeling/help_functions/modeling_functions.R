@@ -71,18 +71,18 @@ my_rf <- function(data, response){
 
 ##--------------------------------------------------------------------
 ## function to fit/tune xgboost model (gradient boosted trees)
-my_xgb <- function(dtrain){
+my_xgb <- function(dtrain, depth = 10000, lr = 0.002, es = 10){ # chang depth and lr if needed
   # input the xgb.Dmatrix format dtrain
   
   # initialize
-  maxTrees <- 200
-  shrinkage <- 0.05
+  maxTrees <- depth
+  shrinkage <- lr
   gamma <- 2
   depth <- 10
   minChildWeight <- 20
   colSample <- 0.9
   subSample <- 0.9
-  earlyStopRound <- 3
+  earlyStopRound <- es
   
   # tune the tree
   set.seed(1)
