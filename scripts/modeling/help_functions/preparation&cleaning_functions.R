@@ -126,8 +126,14 @@ rw_fea_engineering <- function(data, response = ""){
 
 ##--------------------------------------------------------------------
 # evaluation function (calculating rmse)
-eval <- function(data, pred, actual){
+eval <- function(data, pred, actual, nrow = -1){
+  # input data, prediction, actual, and customized nrow (default will be nrow of data)
   data <- data %>% mutate(diff_2 = (!!sym(pred) - !!sym(actual))**2)
-  rmse <- sqrt(sum(data$diff_2)/nrow(data))
+  
+  if (nrow < 0){
+    rmse <- sqrt(sum(data$diff_2)/nrow(data))    
+  }else{ ### cusomized nrow
+    rmse <- sqrt(sum(data$diff_2)/nrow)
+  }
   return (rmse)
 }

@@ -137,6 +137,7 @@ xgb_best_ens_r1 <- my_xgb(dtrain_ens_r1, depth = 100000, lr = 0.001, es = 5)
 
 # will need a super deep tree to accomodate small learning rate (i.e. 0.001) -- currently: 0.82 test rmse with lr=0.03 -- able to converge within 2500 for ~60 features
 
+
 # for next level/checking "overall" training rmse
 dfit_ens_r1 <- xgb.DMatrix(as.matrix(train_1_small_3[, ensemble_features_1])) # fit on train for prediction
 Sys.time()
@@ -147,9 +148,27 @@ Sys.time()
 ```{r}
 train_check <- train_1_small_3 %>%
   mutate(final_predicted = predict(xgb_best_ens_r1, dfit_ens_r1)) %>%
-  select(final_predicted, target)
+  select(final_predicted, target) %>%
+  mutate(row_num = row_number())
 
-eval(train_check, "final_predicted", "target")
+#### overall training rmse
+eval(train_check, "final_predicted", "target") ### training (without considering)
+
+
+#### if assuming all train leaky are ABSOLUTELY predicted correctly
+train_leaky <- read_csv("../../../data/leaked/0730_jiazhen/train_leak.csv")
+train_leaky_check <- train_leaky %>%
+  select(compiled_leak) %>%
+  mutate(row_num = row_number(),
+         compiled_leak = log(compiled_leak))
+
+joined_check <- train_check %>% left_join(train_leaky_check, by = "row_num")
+
+train_check_new <- joined_check %>% filter(is.na(compiled_leak))
+nrow(train_check_new)
+
+#### calculate the new training rmse
+eval(train_check_new, "final_predicted", "target", nrow(train_check)) ### 0.388 -- will be most ideal case
 ```
 
 
