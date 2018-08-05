@@ -133,7 +133,9 @@ train_1_small_3 <- train_1_small_2 %>%
 ensemble_features_1 <- c("r1_pred_xgb", "r1_pred_rf") #,...)
 dtrain_ens_r1 <- xgb.DMatrix(as.matrix(train_1_small_3[, ensemble_features_1]), 
                          label=train_1_small_3[,cur_response_1]) # still same target
-xgb_best_ens_r1 <- my_xgb(dtrain_ens_r1, depth = 100000, lr = 0.001, es = 5) # will need a super deep tree to accomodate small learning rate (i.e. 0.001) -- currently: 0.82 test rmse with lr=0.03 -- able to converge within 2500
+xgb_best_ens_r1 <- my_xgb(dtrain_ens_r1, depth = 100000, lr = 0.001, es = 5) 
+
+# will need a super deep tree to accomodate small learning rate (i.e. 0.001) -- currently: 0.82 test rmse with lr=0.03 -- able to converge within 2500 for ~60 features
 
 # for next level/checking "overall" training rmse
 dfit_ens_r1 <- xgb.DMatrix(as.matrix(train_1_small_3[, ensemble_features_1])) # fit on train for prediction
