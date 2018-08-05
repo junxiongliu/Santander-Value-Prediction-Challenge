@@ -1,20 +1,5 @@
 # Define needed functions here
 
-## CV function
-CVInd <- function(n,K) { #n is sample size; K is number of parts; returns   K-length list of indices for each part
-  m<-floor(n/K) #approximate size of each part
-  r<-n-m*K
-  I<-sample(n,n) #random reordering of the indices
-  Ind<-list() #will be list of indices for all K parts
-  length(Ind)<-K
-  for (k in 1:K) {
-    if (k <= r) kpart <- ((m+1)*(k-1)+1):((m+1)*k)
-    else kpart<-((m+1)*r+m*(k-r-1)+1):((m+1)*r+m*(k-r))
-    Ind[[k]] <- I[kpart] #indices for kth part of data
-  }
-  Ind
-}
-
 ##--------------------------------------------------------------------
 ## function to check "min=max" columns and get rid of such
 noVariation_filter <- function(data){
@@ -103,7 +88,7 @@ rw_fea_engineering <- function(data, response = ""){
     mutate(rowMean = rowMeans(.),
            rowMedian = apply(., 1, median), # , na.rm=TRUE
            rowMax = apply(., 1, max),
-           rowMin = apply(., 1, min),
+           # rowMin = apply(., 1, min),
            rowMean_n0 = apply(.,1, function(x) mean(x[x!=0])), # non-zero mean
            rowMin_n0 = apply(.,1, function(x) min(x[x!=0])), # non-zero min (will produce some inf)
            rowMedian_n0 = apply(.,1, function(x) median(x[x!=0])), # non-zero min           

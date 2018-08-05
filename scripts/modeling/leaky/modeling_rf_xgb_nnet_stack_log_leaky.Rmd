@@ -10,7 +10,7 @@ knitr::opts_chunk$set(collapse=TRUE, prompt=TRUE, eval=TRUE, message=F, include=
 ```
 
 ```{r packageCheck, include=FALSE}
-mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "xgboost","readr")  # what packages are needed?
+mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "xgboost","readr", "caret", "leaps", "elasticnet")  # what packages are needed?
 packs <- installed.packages()   # find installed package list
 install.me <- mypacks[!(mypacks %in% packs[,"Package"])]  #what needs to be installed?
 if (length(install.me) >= 1) install.packages(install.me, repos = "http://cran.us.r-project.org")   # install (if needed)
@@ -19,11 +19,20 @@ lapply(mypacks, library, character.only=TRUE)  # load all packages
 
 # Suggestion: Write functions to make this fully reproducible/easy-to-run.
 
-# "horizontal" stacking of different models
+# "horizontal" stacking of different models after random forest variable selection
+## xgboost (done)
+## randomForest (done)
+## neural network (to be done)
+## knn (done)
+## lm-stepwise (done)
+## Ridge (done)
+## and more..
 
 # ppl in kernel add "log_leak" column into training. We don't.. -- we are at rmse roughly 1.20 at training set
 
 #### may currently focus on using whole train
+
+#### top 50rf features give ~0.82 test rmse
 
 # Read in help functions
 ```{r}
@@ -78,8 +87,8 @@ Sys.time()
 
 ### general initialization (careful about too many features at this step) -- can result in slow training
 ```{r}
-num_top <- 50 # number of top features
-# num_top <- 100 # number of top features
+# num_top <- 50 # number of top features
+num_top <- 100 # number of top features
 # num_top <- 200
 # num_top <- 300 # updated
 # num_top <- 30
@@ -122,21 +131,64 @@ rf_best_r1 <- my_rf(train_1_small_2, cur_response_1)
 Sys.time()
 ```
 
+
+#### fit neural network
+```{r}
+
+```
+
+
+#### fit knn
+```{r}
+knn_best_r1 <- my_knn(train_1_small_2, init_features_1, cur_response_1)
+Sys.time()
+```
+
+
+#### fit lm (stepwise)
+```{r}
+lm_best_r1 <- my_lmstep(train_1_small_2, init_features_1, cur_response_1)
+Sys.time()
+```
+
+
+#### fit Ridge
+```{r}
+ridge_best_r1 <- my_ridge(train_1_small_2, init_features_1, cur_response_1)
+Sys.time()
+```
+
+
 #### ensemble the models results using a xgboost model
 ```{r}
 # get predictions
 train_1_small_3 <- train_1_small_2 %>% 
   mutate(r1_pred_xgb = predict(xgb_best_r1, dfit_r1),
-         r1_pred_rf = predict(rf_best_r1))
+         r1_pred_rf = predict(rf_best_r1),
+         r1_pred_knn = predict(knn_best_r1),
+         r1_pred_lm = predict(lm_best_r1),
+         r1_pred_ridge = predict(ridge_best_r1))
 
 # get ensemble features and train a xgb
-ensemble_features_1 <- c("r1_pred_xgb", "r1_pred_rf") #,...)
+ensemble_features_1 <- c("r1_pred_xgb", "r1_pred_rf", "r1_pred_knn", "r1_pred_lm", "r1_pred_ridge") #,...)
 dtrain_ens_r1 <- xgb.DMatrix(as.matrix(train_1_small_3[, ensemble_features_1]), 
                          label=train_1_small_3[,cur_response_1]) # still same target
-xgb_best_ens_r1 <- my_xgb(dtrain_ens_r1, depth = 100000, lr = 0.001, es = 5) 
+xgb_best_ens_r1 <- my_xgb(dtrain_ens_r1, depth = 100000, lr = 0.03, es = 10) 
 
-# will need a super deep tree to accomodate small learning rate (i.e. 0.001) -- currently: 0.82 test rmse with lr=0.03 -- able to converge within 2500 for ~60 features
+# will need a super deep tree to accomodate small learning rate (i.e. 0.001) 
 
+# ensemble only xgboost and rf
+# ~60 features:
+##-- currently: 0.82 test rmse with lr=0.03 -- able to converge within 2500 
+## (lr = 0.001) -- converge within 62000 for ~60 features; teset rmse 0.826
+# ~110 features:
+## currently 0.804 test rmse
+
+# ensemble xgboost, rf and knn
+## ~0.704 rmse
+
+# ensemble xgboost, rf, knn, and lm(stepwise)
+## ~0.687 rmse
 
 # for next level/checking "overall" training rmse
 dfit_ens_r1 <- xgb.DMatrix(as.matrix(train_1_small_3[, ensemble_features_1])) # fit on train for prediction
@@ -168,7 +220,9 @@ train_check_new <- joined_check %>% filter(is.na(compiled_leak))
 nrow(train_check_new)
 
 #### calculate the new training rmse
-eval(train_check_new, "final_predicted", "target", nrow(train_check)) ### 0.388 -- will be most ideal case
+eval(train_check_new, "final_predicted", "target", nrow(train_check)) 
+### 0.388 -- will be most ideal case (~60 feas, 2ens)
+### 0.387 -- 110 feas 2 ens
 ```
 
 
@@ -207,7 +261,9 @@ dtest_r1 <- xgb.DMatrix(as.matrix(test_r1[, init_features_1]))
 ## individual results round 1
 test_r1_ind_res <- test %>% 
   mutate(r1_pred_xgb = predict(xgb_best_r1, dtest_r1),
-         r1_pred_rf = predict(rf_best_r1, newdata = test_r1))
+         r1_pred_rf = predict(rf_best_r1, newdata = test_r1),
+         r1_pred_knn = predict(knn_best_r1, newdata = test_r1),
+         r1_pred_lm = predict(lm_best_r1, newdata = test_r1))
 
 ## ensemble results round 1
 dtest_r1_ens <- xgb.DMatrix(as.matrix(test_r1_ind_res[, ensemble_features_1]))
@@ -216,6 +272,8 @@ test_r1_ens <- test_r1_ind_res %>%
   select(ID, 
          r1_pred_xgb,
          r1_pred_rf,
+         r1_pred_knn,
+         r1_pred_lm,
          #....,
          target) # for view
 
@@ -236,7 +294,7 @@ final_out <- bind_rows(out, test_leaky_out)
 
 ## write out
 ```{r}
-write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainwhole_top50rf_rfxgbens_fullTuned.csv", 
+write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainwhole_top100rf_rfxgbens_fullTuned.csv", 
           row.names = FALSE)
 ```
 

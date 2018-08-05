@@ -1,3 +1,58 @@
+## functions for modeling
+
+##--------------------------------------------------------------------
+## CV function
+CVInd <- function(n,K) { #n is sample size; K is number of parts; returns   K-length list of indices for each part
+  m<-floor(n/K) #approximate size of each part
+  r<-n-m*K
+  I<-sample(n,n) #random reordering of the indices
+  Ind<-list() #will be list of indices for all K parts
+  length(Ind)<-K
+  for (k in 1:K) {
+    if (k <= r) kpart <- ((m+1)*(k-1)+1):((m+1)*k)
+    else kpart<-((m+1)*r+m*(k-r-1)+1):((m+1)*r+m*(k-r))
+    Ind[[k]] <- I[kpart] #indices for kth part of data
+  }
+  Ind
+}
+
+##--------------------------------------------------------------------
+## function to fit/tune knn model
+my_knn <- function(data, features, response){
+  data_fea <- data[,init_features_1]
+  data_res <- data[,response]
+  set.seed(1)
+  ctrl_knn <- trainControl(method="repeatedcv",repeats = 3, number = 10) # 10-fold cross validation
+  knnFit <- train(data_fea, data_res, method = "knn", 
+                  trControl = ctrl_knn, preProcess = c("center","scale"), tuneLength = 20)
+  
+  return (knnFit)
+}
+
+##--------------------------------------------------------------------
+## function to fit/tune lm-stepwise model
+my_lmstep <- function(data, features, response){
+  data_fea <- data[,features]
+  data_res <- data[,response]
+  set.seed(1)
+  ctrl_lm <- trainControl(method="repeatedcv",repeats = 3, number = 10) # 10-fold cross validation
+  lmFit <- train(data_fea, data_res, method = "leapSeq", 
+                 trControl = ctrl_lm, tuneLength = 20)
+  
+  return (lmFit)
+}
+
+##--------------------------------------------------------------------
+## function to fit/tune ridge regression model
+my_ridge <- function(data, features, response){
+  data_fea <- data[,features]
+  data_res <- data[,response]
+  set.seed(1)
+  ctrl_ridge <- trainControl(method="repeatedcv",repeats = 3, number = 10) # 10-fold cross validation
+  ridgeFit <- train(data_fea, data_res, method = "ridge", 
+                    trControl = ctrl_ridge, tuneLength = 10)
+}
+
 ##--------------------------------------------------------------------
 ## function to fit/tune random forest model
 my_rf <- function(data, response){
