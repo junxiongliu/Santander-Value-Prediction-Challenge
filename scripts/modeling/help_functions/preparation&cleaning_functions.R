@@ -49,7 +49,7 @@ corr_selection <- function(data, features, response, topn){
 ## function to select based on random forest importance
 rf_selection <- function(data, response, topn){
   # input data, vector of response (will be against all features) and topn correlations you want
-  # output dataframe with top selected features (and target)
+  # output top n features (sorted)
   
   cur_formula <- paste(response, "~.", sep = "")
   
@@ -63,11 +63,31 @@ rf_selection <- function(data, response, topn){
     mutate(feature = rownames(rf_importance)) %>%
     arrange(desc(X.IncMSE)) %>% head(topn)
   
-  all_f <- c(as.vector(rf_topn$feature), response)
-  data_small <- data %>% select(all_f)
+  all_f <- c(as.vector(rf_topn$feature))#, response)
+  # data_small <- data %>% select(all_f)
   
-  return (data_small)
+  return (all_f)
 }
+
+##--------------------------------------------------------------------
+## function to select based on xgboost importance
+xgb_selection <- function(fea_matrix, response_matrix, topn){
+  # input feature matrix, response matrix and number of n features to return
+  # return list of topn features (sorted by importance)
+  
+  xgb_model <- xgboost(data = fea_matrix, label = response_matrix, 
+                 eta = 0.3, nthread = 1, nrounds = 200, objective = "reg:linear",
+                 early_stopping_rounds = 3, verbose = 1)
+  
+  # importance
+  xgbImp <- data.frame(xgb.importance(model = xgb_model))
+  top_fea <- xgbImp %>% arrange(desc(Gain)) %>% head(topn)
+  all_f <- as.vector(top_fea$Feature)
+  
+  return (all_f)
+  
+}
+
 
 ##--------------------------------------------------------------------
 ## function to do "row-wise" feature engineering

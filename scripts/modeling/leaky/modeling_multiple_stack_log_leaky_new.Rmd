@@ -22,21 +22,21 @@ lapply(mypacks, library, character.only=TRUE)  # load all packages
 # "horizontal" stacking of different models after random forest variable selection
 ## xgboost (done)
 ## randomForest (done)
-## neural network (to be done)
 ## knn (done)
 ## lm-stepwise (done)
 ## Ridge (done)
+## SVM (to be done)
+## Neural Network (to be done)
+## Lightgbm (to be done)
 ## and more..
 
-## (https://www.kaggle.com/serigne/stacked-regressions-top-4-on-leaderboard)
+## stacking methods update according to: (https://www.kaggle.com/serigne/stacked-regressions-top-4-on-leaderboard)
 
 # Read in help functions
 ```{r}
 source("../help_functions/preparation&cleaning_functions.R")
 source("../help_functions/modeling_functions.R")
 ```
-
-# logged response
 
 #-------------------------------------------------------
 # Now start operations:
@@ -59,7 +59,6 @@ Sys.time()
 
 #-------------------------------------------------------
 ## General Cleaning: Data Quality/Unsupervised method (non-response related)
-
 ### General Cleaning (gc) step 1: get rid of invalid features (min=max)
 ```{r}
 Sys.time()
@@ -69,26 +68,43 @@ Sys.time()
 
 #-------------------------------------------------------
 ## Response-related and fit
-
 ### general initialization (careful about too many features at this step) -- can result in slow training
 ```{r}
-# num_top <- 50 # number of top features
+num_top <- 50 # number of top features
 # num_top <- 100 # number of top features
 # num_top <- 200
 # num_top <- 300 # updated
-num_top <- 30 
+# num_top <- 30 
 train_1 <- train_gc_s1
 ```
 
-### feature selection with random forest and feature engineering
+### feature selection with random forest/xgb
 ```{r}
 Sys.time()
 # Initialize
 num_top_1 <- num_top
 cur_response_1 <- "target"
-train_1_small_1 <- rf_selection(train_1, cur_response_1, num_top_1)
-rf_features_1 <- base::setdiff(names(train_1_small_1), c(cur_response_1)) # for testing correspondence
+all_feas <- base::setdiff(names(train_1), cur_response_1)
 
+## rf feature selection
+rf_selected_feas_1 <- rf_selection(train_1, cur_response_1, num_top_1)
+rf_top_feas <- rf_selected_feas_1[1:ceiling(num_top_1/5)]
+## xgb feature selection
+feas <- as.matrix(train_1[, all_feas])
+respo <- as.matrix(train_1[,cur_response_1])
+xgb_selected_feas_1 <- xgb_selection(feas, respo, num_top_1)
+xgb_top_feas <- xgb_selected_feas_1[1:ceiling(num_top_1/5)]
+
+## get intersection and top of each method as final feature set
+intersect_features_1 <- base::intersect(xgb_selected_feas_1, rf_selected_feas_1)
+intersect_features_1 <- c(intersect_features_1, rf_top_feas, xgb_top_feas)
+intersect_features_1 <- unique(intersect_features_1)
+
+train_1_small_1 <- train_1 %>% select(c(intersect_features_1, cur_response_1))
+```
+
+### row-wise feature engineering
+```{r}
 # row-wise feature engineering
 train_1_small_2 <- rw_fea_engineering(train_1_small_1, cur_response_1)
 # get final features
@@ -104,8 +120,6 @@ rm(train_1, train_1_small_1, train_gc_s1)
 num_folds <- 5
 num_methods <- 5 # number of methods for ensembling
 method_names <- c("xgb", "rf", "knn", "lm", "ridge")
-# num_methods <- 1
-# method_names <- c("lm")
 ind <- CVInd(nrow(train_1_small_2), num_folds)
 all_ind <- c(1:nrow(train_1_small_2))
 
@@ -120,6 +134,8 @@ colnames(train_for_ens) <- x
 Sys.time()
 # fill in predictions
 for (i in 1:num_folds){ # each slice serve as testing
+  print (paste("Now working on fold", as.character(i)))
+  
   #################set up train/test
   test_slice <- train_1_small_2[ind[[i]],]
   remaining_ind <- base::setdiff(all_ind, ind[[i]]) # remaining set
@@ -155,19 +171,28 @@ for (i in 1:num_folds){ # each slice serve as testing
   
   #################combine the test slice back to train
   train_for_ens <- base::rbind(train_for_ens, test_slice)
+  
+  print (paste("Completed fold", as.character(i)))
+  print ("-----------------------------------------------------------")
+  
 }
 Sys.time()
 ```
 
 ### build the "meta" level 2 ensemble model with xgboost from meta-data
 ```{r}
-ensemble_features_1 <- c("xgb", "rf", "knn", "lm", "ridge") #,...)
+# get the level 1 prediction results and very top features from original selection as ensemble
+top_feas <- base::intersect(rf_top_feas, xgb_top_feas)
+ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge")) #,...)
 dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
                          label=train_for_ens[,cur_response_1]) # still same target
-xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.01, es = 5) 
+xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.002, es = 5) 
+Sys.time()
+
+# get rmse 1.421 for ensembling
 ```
 
-### refit all the level 1 models to prepare for predictions on holdout ("real test")
+### refit all level 1 models to prepare for predictions on holdout ("real test")
 ```{r}
 # 1. xgboost
 dtrain <- xgb.DMatrix(as.matrix(train_1_small_2[, init_features_1]),
@@ -222,7 +247,7 @@ for (each in all_test_col){
 ## now predict stuff
 ```{r}
 ## for xgboost in training initial round
-test_r1 <- rw_fea_engineering(test[,rf_features_1]) # generate the row-wise features for test
+test_r1 <- rw_fea_engineering(test[,intersect_features_1]) # generate the row-wise features for test
 dtest_r1 <- xgb.DMatrix(as.matrix(test_r1[, init_features_1]))
 
 ## individual results round 1
@@ -233,9 +258,9 @@ test_ind_res <- test %>%
          lm = predict(lm_best, newdata = test_r1),
          ridge = predict(ridge_best, newdata = test_r1))
 
-## get ensemble results use meta model
+## get ensemble results using meta model
 dtest_ens <- xgb.DMatrix(as.matrix(test_ind_res[, ensemble_features_1]))
-test_ens <- test_nd_res %>%
+test_ens <- test_ind_res %>%
   mutate(target = predict(xgb_best_ens, dtest_ens)) %>% 
   select(ID, 
          xgb,
@@ -247,7 +272,7 @@ test_ens <- test_nd_res %>%
          target) # for view
 
 ## exponential to get final results
-out <- test_r1_ens %>% 
+out <- test_ens %>% 
   mutate(target = exp(target)) %>% # get the exponential
   select(ID, target)
 ```
@@ -263,7 +288,7 @@ final_out <- bind_rows(out, test_leaky_out)
 
 ## write out
 ```{r}
-write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainnoleak_top30rf_5ens_notoverfitt.csv", 
+write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainwhole_top30rf_5ens_notoverfit.csv", 
           row.names = FALSE)
 ```
 
