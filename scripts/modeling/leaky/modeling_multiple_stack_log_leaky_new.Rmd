@@ -1,0 +1,273 @@
+---
+title: "modeling_multiple_stack_log_leaky_new"
+author: "Junxiong Liu"
+date: "August 5, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse=TRUE, prompt=TRUE, eval=TRUE, message=F, include=T,comment=NULL,fig.width = 5, warning = FALSE, fig.height = 3,tidy.opts=list(width.cutoff=50),tidy=TRUE,cache = TRUE)
+```
+
+```{r packageCheck, include=FALSE}
+mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "xgboost","readr", "caret", "leaps", "elasticnet", "rlang")  # what packages are needed?
+packs <- installed.packages()   # find installed package list
+install.me <- mypacks[!(mypacks %in% packs[,"Package"])]  #what needs to be installed?
+if (length(install.me) >= 1) install.packages(install.me, repos = "http://cran.us.r-project.org")   # install (if needed)
+lapply(mypacks, library, character.only=TRUE)  # load all packages
+```
+
+# New way of stacking (08/05 update)
+
+# "horizontal" stacking of different models after random forest variable selection
+## xgboost (done)
+## randomForest (done)
+## neural network (to be done)
+## knn (done)
+## lm-stepwise (done)
+## Ridge (done)
+## and more..
+
+## (https://www.kaggle.com/serigne/stacked-regressions-top-4-on-leaderboard)
+
+# Read in help functions
+```{r}
+source("../help_functions/preparation&cleaning_functions.R")
+source("../help_functions/modeling_functions.R")
+```
+
+# logged response
+
+#-------------------------------------------------------
+# Now start operations:
+
+## Read in train data
+```{r}
+Sys.time()
+
+# just use only non-leaky portion to train and predict non-leaky test
+# train <- read.csv("../../../data/cleaned/leaky_combined_0730/train_noleak.csv")
+
+# still use the whole "train" to train.
+train <- read.csv("../../../data/raw/train.csv")
+
+train_noid <- train %>% 
+  select(-ID) %>%
+  mutate(target = log(target))
+Sys.time()
+```
+
+#-------------------------------------------------------
+## General Cleaning: Data Quality/Unsupervised method (non-response related)
+
+### General Cleaning (gc) step 1: get rid of invalid features (min=max)
+```{r}
+Sys.time()
+train_gc_s1 <- noVariation_filter(train_noid)
+Sys.time()
+```
+
+#-------------------------------------------------------
+## Response-related and fit
+
+### general initialization (careful about too many features at this step) -- can result in slow training
+```{r}
+# num_top <- 50 # number of top features
+# num_top <- 100 # number of top features
+# num_top <- 200
+# num_top <- 300 # updated
+num_top <- 30 
+train_1 <- train_gc_s1
+```
+
+### feature selection with random forest and feature engineering
+```{r}
+Sys.time()
+# Initialize
+num_top_1 <- num_top
+cur_response_1 <- "target"
+train_1_small_1 <- rf_selection(train_1, cur_response_1, num_top_1)
+rf_features_1 <- base::setdiff(names(train_1_small_1), c(cur_response_1)) # for testing correspondence
+
+# row-wise feature engineering
+train_1_small_2 <- rw_fea_engineering(train_1_small_1, cur_response_1)
+# get final features
+init_features_1 <- base::setdiff(names(train_1_small_2), c(cur_response_1))
+Sys.time()
+
+rm(train_1, train_1_small_1, train_gc_s1)
+```
+
+
+### Divide the training data into multiple folds (for "out-of-fold" prediction and stacking) and prepare for out-of-fold predictions for level 1 models
+```{r}
+num_folds <- 5
+num_methods <- 5 # number of methods for ensembling
+method_names <- c("xgb", "rf", "knn", "lm", "ridge")
+# num_methods <- 1
+# method_names <- c("lm")
+ind <- CVInd(nrow(train_1_small_2), num_folds)
+all_ind <- c(1:nrow(train_1_small_2))
+
+# create an empty dataframe to fill in predictions
+train_for_ens <- data.frame(matrix(ncol = ncol(train_1_small_2) + num_methods, nrow = 0))
+x <- c(names(train_1_small_2), method_names)
+colnames(train_for_ens) <- x
+```
+
+### operation; out-of-fold predictions for different methods
+```{r}
+Sys.time()
+# fill in predictions
+for (i in 1:num_folds){ # each slice serve as testing
+  #################set up train/test
+  test_slice <- train_1_small_2[ind[[i]],]
+  remaining_ind <- base::setdiff(all_ind, ind[[i]]) # remaining set
+  train_slice <- train_1_small_2[remaining_ind,]
+  
+  #################fitting and predicting on test slice
+  # 1. xgboost
+  dtrain <- xgb.DMatrix(as.matrix(train_slice[, init_features_1]),
+                           label=as.matrix(train_slice[,cur_response_1]))
+  xgb_best <- my_xgb(dtrain)
+  dtest <- xgb.DMatrix(as.matrix(test_slice[, init_features_1]))
+  test_slice <- test_slice %>% mutate(xgb = predict(xgb_best, newdata = dtest))
+
+  # -----------------------------------------------------------
+  # 2. Random Forest
+  rf_best <- my_rf(train_slice, cur_response_1)
+  test_slice <- test_slice %>% mutate(rf = predict(rf_best, newdata = test_slice))
+
+  # -----------------------------------------------------------
+  # 3. knn
+  knn_best <- my_knn(train_slice, init_features_1, cur_response_1)
+  test_slice <- test_slice %>% mutate(knn = predict(knn_best, newdata = test_slice))
+
+  # -----------------------------------------------------------
+  # 4. lm (stepwise)
+  lm_best <- my_lmstep(train_slice, init_features_1, cur_response_1)
+  test_slice <- test_slice %>% mutate(lm = predict(lm_best, newdata = test_slice))
+
+  # -----------------------------------------------------------
+  # 5. ridge
+  ridge_best <- my_ridge(train_slice, init_features_1, cur_response_1)
+  test_slice <- test_slice %>% mutate(ridge = predict(ridge_best, newdata = test_slice))
+  
+  #################combine the test slice back to train
+  train_for_ens <- base::rbind(train_for_ens, test_slice)
+}
+Sys.time()
+```
+
+### build the "meta" level 2 ensemble model with xgboost from meta-data
+```{r}
+ensemble_features_1 <- c("xgb", "rf", "knn", "lm", "ridge") #,...)
+dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
+                         label=train_for_ens[,cur_response_1]) # still same target
+xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.01, es = 5) 
+```
+
+### refit all the level 1 models to prepare for predictions on holdout ("real test")
+```{r}
+# 1. xgboost
+dtrain <- xgb.DMatrix(as.matrix(train_1_small_2[, init_features_1]),
+                         label=as.matrix(train_1_small_2[,cur_response_1]))
+xgb_best <- my_xgb(dtrain)
+
+# -----------------------------------------------------------
+# 2. Random Forest
+rf_best <- my_rf(train_1_small_2, cur_response_1)
+
+# -----------------------------------------------------------
+# 3. knn
+knn_best <- my_knn(train_1_small_2, init_features_1, cur_response_1)
+
+# -----------------------------------------------------------
+# 4. lm (stepwise)
+lm_best <- my_lmstep(train_1_small_2, init_features_1, cur_response_1)
+
+# -----------------------------------------------------------
+# 5. ridge
+ridge_best <- my_ridge(train_1_small_2, init_features_1, cur_response_1)
+Sys.time()
+```
+
+# -----------------------------------------------------------
+## Now predictions on the holdout (real "test"):
+
+## Read in the test set and predict
+```{r}
+test <- read_csv("../../../data/cleaned/leaky_combined_0730/test_noleak.csv")
+test_leaky <- read_csv("../../../data/cleaned/leaky_combined_0730/test_leak.csv")
+```
+
+## let the test column match the train column
+### note: if the test column starts with a number, will add an x to let it match the train columns
+```{r}
+all_test_col <- names(test)
+all_test_col_new <- c() # new ones
+
+for (each in all_test_col){
+  each_new <- each
+  
+  if (is.na(as.numeric(substring(each, 1, 1))) == FALSE){ 
+    # this col starts with a number
+    each_new <- paste("X", each, sep = "")
+  }
+  all_test_col_new <- c(all_test_col_new, each_new)
+  colnames(test)[which(names(test) == each)] <- each_new
+}
+```
+
+## now predict stuff
+```{r}
+## for xgboost in training initial round
+test_r1 <- rw_fea_engineering(test[,rf_features_1]) # generate the row-wise features for test
+dtest_r1 <- xgb.DMatrix(as.matrix(test_r1[, init_features_1]))
+
+## individual results round 1
+test_ind_res <- test %>% 
+  mutate(xgb = predict(xgb_best, dtest_r1),
+         rf = predict(rf_best, newdata = test_r1),
+         knn = predict(knn_best, newdata = test_r1),
+         lm = predict(lm_best, newdata = test_r1),
+         ridge = predict(ridge_best, newdata = test_r1))
+
+## get ensemble results use meta model
+dtest_ens <- xgb.DMatrix(as.matrix(test_ind_res[, ensemble_features_1]))
+test_ens <- test_nd_res %>%
+  mutate(target = predict(xgb_best_ens, dtest_ens)) %>% 
+  select(ID, 
+         xgb,
+         rf,
+         knn,
+         lm,
+         ridge,
+         #....,
+         target) # for view
+
+## exponential to get final results
+out <- test_r1_ens %>% 
+  mutate(target = exp(target)) %>% # get the exponential
+  select(ID, target)
+```
+
+## combine with test_leaky
+```{r}
+test_leaky_out <- test_leaky %>% 
+  select(ID, compiled_leak) %>%
+  rename(target = compiled_leak)
+
+final_out <- bind_rows(out, test_leaky_out)
+```
+
+## write out
+```{r}
+write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainnoleak_top30rf_5ens_notoverfitt.csv", 
+          row.names = FALSE)
+```
+
+
+```{r}
+
+```

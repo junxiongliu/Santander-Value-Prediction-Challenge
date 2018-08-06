@@ -28,11 +28,9 @@ lapply(mypacks, library, character.only=TRUE)  # load all packages
 ## Ridge (done)
 ## and more..
 
-# ppl in kernel add "log_leak" column into training. We don't.. -- we are at rmse roughly 1.20 at training set
+## (original xgboost stacking directly is archived; should not fit a xgboost on top of predictions of all data -- could be massive overfitting...need to be out-of-fold...check out this way: https://www.kaggle.com/serigne/stacked-regressions-top-4-on-leaderboard)
 
-#### may currently focus on using whole train
-
-#### top 50rf features give ~0.82 test rmse
+## divide training here..
 
 # Read in help functions
 ```{r}
@@ -71,24 +69,13 @@ train_gc_s1 <- noVariation_filter(train_noid)
 Sys.time()
 ```
 
-### General Cleaning (gc) step 2: get rid of highly correlated features (disabled)
-```{r}
-# Sys.time()
-# temp <- train_gc_s1 %>% select(-target)
-# threshold <- 0.95 # get rid of > 0.95 correlations
-# decorr_feas <- collinear_filter(temp, threshold)
-# to_select <- c(decorr_feas, "target")
-# train_gc_s2 <- train_gc_s1 %>% select(to_select)
-# Sys.time()
-```
-
 #-------------------------------------------------------
 ## Response-related and fit
 
 ### general initialization (careful about too many features at this step) -- can result in slow training
 ```{r}
-# num_top <- 50 # number of top features
-num_top <- 100 # number of top features
+num_top <- 50 # number of top features
+# num_top <- 100 # number of top features
 # num_top <- 200
 # num_top <- 300 # updated
 # num_top <- 30
@@ -109,7 +96,10 @@ train_1_small_2 <- rw_fea_engineering(train_1_small_1, cur_response_1)
 # get final features
 init_features_1 <- base::setdiff(names(train_1_small_2), c(cur_response_1))
 Sys.time()
+
+rm(train_1, train_1_small_1, train_gc_s1)
 ```
+
 
 ### General Level 1 -- stacking
 
@@ -185,13 +175,13 @@ xgb_best_ens_r1 <- my_xgb(dtrain_ens_r1, depth = 100000, lr = 0.01, es = 5)
 ## currently 0.804 test rmse
 
 # ensemble xgboost, rf and knn
-## ~0.704 rmse
+## ~0.704 testing rmse
 
 # ensemble xgboost, rf, knn, and lm(stepwise)
-## ~0.687 rmse
+## ~0.687 testing rmse
 
 # ensemble xgboost, rf, knn, and lm, ridge(stepwise)
-## ~0.679 rmse
+## ~0.679 testing rmse
 
 # for next level/checking "overall" training rmse
 dfit_ens_r1 <- xgb.DMatrix(as.matrix(train_1_small_3[, ensemble_features_1])) # fit on train for prediction
@@ -300,7 +290,7 @@ final_out <- bind_rows(out, test_leaky_out)
 
 ## write out
 ```{r}
-write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainwhole_top100rf_5ens_fullTuned.csv", 
+write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainnoleak_top100rf_5ens_fullTuned.csv", 
           row.names = FALSE)
 ```
 
