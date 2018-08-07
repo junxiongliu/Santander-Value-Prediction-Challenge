@@ -117,14 +117,14 @@ rm(train_1, train_1_small_1, train_gc_s1)
 
 ### Divide the training data into multiple folds (for "out-of-fold" prediction and stacking) and prepare for out-of-fold predictions for level 1 models
 ```{r}
-# num_folds <- 3
+# num_folds <- 2
 # num_folds <- 5
 num_folds <- 10
 num_methods <- 7 # number of methods for ensembling
-method_names <- c("xgb", "rf", "knn", "lm", "ridge", "svmLinear", "lgb")
+method_names <- c("xgb", "rf", "knn", "lm", "ridge", "SVMLinear", "lgb")
 
 # num_methods <- 1 # number of methods for ensembling
-# method_names <- c("nnet")
+#method_names <- c("nnet")
 
 ind <- CVInd(nrow(train_1_small_2), num_folds)
 all_ind <- c(1:nrow(train_1_small_2))
@@ -174,16 +174,16 @@ for (i in 1:num_folds){ # each slice serve as testing
   # 5. ridge
   ridge_best <- my_ridge(train_slice, init_features_1, cur_response_1)
   test_slice <- test_slice %>% mutate(ridge = predict(ridge_best, newdata = test_slice))
-
+  # 
   # -----------------------------------------------------------
   # 6. SVM
   SVMLinear_best <- my_svmLinear(train_slice, init_features_1, cur_response_1)
-  test_slice <- test_slice %>% mutate(svmLinear = predict(svmLinear_best, newdata = test_slice))
+  test_slice <- test_slice %>% mutate(SVMLinear = predict(SVMLinear_best, newdata = test_slice))
   
   # -----------------------------------------------------------
   # 7. LightGBM
   ## fit lgb
-  lgb_dtrain <- lgb.Dataset(data = as.matrix(train_slice[,init_features_1]), 
+  lgb_dtrain <- lgb.Dataset(data = as.matrix(train_slice[,init_features_1]),
                             label = as.matrix(train_slice[,cur_response_1]))
   lgb_best <- my_lgb(lgb_dtrain)
   ## predict on test slice
@@ -206,7 +206,6 @@ for (i in 1:num_folds){ # each slice serve as testing
 }
 Sys.time()
 
-train_for_ens2 <- train_for_ens %>% mutate(row_num = row_number())
 ```
 
 ### build the "meta" level 2 ensemble model with xgboost from meta-data
@@ -217,9 +216,9 @@ top_feas <- base::intersect(rf_top_feas, xgb_top_feas)
 ### may add row-wise feature engineering for this layer in the future
 
 
-ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "svmLinear", "lgb")) #,...)
+ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "SVMLinear", "lgb")) #,...)
 dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
-                         label=train_for_ens[,cur_response_1]) # still same target
+                         label=as.matrix(train_for_ens[,cur_response_1])) # still same target
 xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.002, es = 5) 
 Sys.time()
 
@@ -230,8 +229,8 @@ Sys.time()
 
 # get rmse 1.089339 (training rmse) -- top 200 rf/xgb (should prob be ~1.347 test rmse) for ensembling -- top 200 rf/xgb selection - 10 folds -- currently best score: 0.67 Public Leaderboard
 
-# 7 ensemble:
-
+# 7 ensemble: 
+# 200 feas: 
 ```
 
 ### refit all level 1 models to prepare for predictions on holdout ("real test")
@@ -316,7 +315,7 @@ test_ind_res <- test %>%
          knn = predict(knn_best, newdata = test_r1),
          lm = predict(lm_best, newdata = test_r1),
          ridge = predict(ridge_best, newdata = test_r1),
-         svmLinear = predict(SVMLinear_best, newdata = test_r1),
+         SVMLinear = predict(SVMLinear_best, newdata = test_r1),
          lgb = predict(lgb_best, lgb_dtest_r1)# ,
          # nnet ## to be filled here
          )
@@ -331,7 +330,7 @@ test_ens <- test_ind_res %>%
          knn,
          lm,
          ridge,
-         svmLinear,
+         SVMLinear,
          lgb,
          # nnet,
          #....,
