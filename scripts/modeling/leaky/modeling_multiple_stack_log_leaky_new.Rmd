@@ -10,7 +10,7 @@ knitr::opts_chunk$set(collapse=TRUE, prompt=TRUE, eval=TRUE, message=F, include=
 ```
 
 ```{r packageCheck, include=FALSE}
-mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "xgboost","readr", "caret", "leaps", "elasticnet", "rlang")  # what packages are needed?
+mypacks <- c("tidyverse","car","tidyr","cvTools","rpart","nnet","gbm","yaImpute","randomForest", "xgboost","readr", "caret", "leaps", "elasticnet", "rlang", "e1071", "lightgbm")  # what packages are needed?
 packs <- installed.packages()   # find installed package list
 install.me <- mypacks[!(mypacks %in% packs[,"Package"])]  #what needs to be installed?
 if (length(install.me) >= 1) install.packages(install.me, repos = "http://cran.us.r-project.org")   # install (if needed)
@@ -25,9 +25,9 @@ lapply(mypacks, library, character.only=TRUE)  # load all packages
 ## knn (done)
 ## lm-stepwise (done)
 ## Ridge (done)
-## SVM (to be done)
+## SVM (done)
+## Lightgbm (done)
 ## Neural Network (to be done)
-## Lightgbm (to be done)
 ## and more..
 
 ## stacking methods update according to: (https://www.kaggle.com/serigne/stacked-regressions-top-4-on-leaderboard)
@@ -70,9 +70,10 @@ Sys.time()
 ## Response-related and fit
 ### general initialization (careful about too many features at this step) -- can result in slow training
 ```{r}
-num_top <- 50 # number of top features
+# num_top <- 50 # number of top features
 # num_top <- 100 # number of top features
-# num_top <- 200
+# num_top <- 120
+num_top <- 200
 # num_top <- 300 # updated
 # num_top <- 30 
 train_1 <- train_gc_s1
@@ -114,12 +115,17 @@ Sys.time()
 rm(train_1, train_1_small_1, train_gc_s1)
 ```
 
-
 ### Divide the training data into multiple folds (for "out-of-fold" prediction and stacking) and prepare for out-of-fold predictions for level 1 models
 ```{r}
-num_folds <- 5
-num_methods <- 5 # number of methods for ensembling
-method_names <- c("xgb", "rf", "knn", "lm", "ridge")
+# num_folds <- 3
+# num_folds <- 5
+num_folds <- 10
+num_methods <- 7 # number of methods for ensembling
+method_names <- c("xgb", "rf", "knn", "lm", "ridge", "svmLinear", "lgb")
+
+# num_methods <- 1 # number of methods for ensembling
+# method_names <- c("nnet")
+
 ind <- CVInd(nrow(train_1_small_2), num_folds)
 all_ind <- c(1:nrow(train_1_small_2))
 
@@ -168,7 +174,29 @@ for (i in 1:num_folds){ # each slice serve as testing
   # 5. ridge
   ridge_best <- my_ridge(train_slice, init_features_1, cur_response_1)
   test_slice <- test_slice %>% mutate(ridge = predict(ridge_best, newdata = test_slice))
+
+  # -----------------------------------------------------------
+  # 6. SVM
+  SVMLinear_best <- my_svmLinear(train_slice, init_features_1, cur_response_1)
+  test_slice <- test_slice %>% mutate(svmLinear = predict(svmLinear_best, newdata = test_slice))
   
+  # -----------------------------------------------------------
+  # 7. LightGBM
+  ## fit lgb
+  lgb_dtrain <- lgb.Dataset(data = as.matrix(train_slice[,init_features_1]), 
+                            label = as.matrix(train_slice[,cur_response_1]))
+  lgb_best <- my_lgb(lgb_dtrain)
+  ## predict on test slice
+  lgb_dtest <- as.matrix(test_slice[, init_features_1])
+  test_slice <- test_slice %>% mutate(lgb = predict(lgb_best, lgb_dtest))
+  
+  # -----------------------------------------------------------
+  # 8. Neural Network
+  ### TO BE FILLED HERE
+  
+
+  # -----------------------------------------------------------
+      
   #################combine the test slice back to train
   train_for_ens <- base::rbind(train_for_ens, test_slice)
   
@@ -177,19 +205,33 @@ for (i in 1:num_folds){ # each slice serve as testing
   
 }
 Sys.time()
+
+train_for_ens2 <- train_for_ens %>% mutate(row_num = row_number())
 ```
 
 ### build the "meta" level 2 ensemble model with xgboost from meta-data
 ```{r}
-# get the level 1 prediction results and very top features from original selection as ensemble
+# get the level 1 prediction results and very top features from original selection for level 2 ensemble
 top_feas <- base::intersect(rf_top_feas, xgb_top_feas)
-ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge")) #,...)
+
+### may add row-wise feature engineering for this layer in the future
+
+
+ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "svmLinear", "lgb")) #,...)
 dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
                          label=train_for_ens[,cur_response_1]) # still same target
 xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.002, es = 5) 
 Sys.time()
 
-# get rmse 1.421 for ensembling
+## 5 fold 5 ensemble:
+# get rmse 1.421 for ensembling -- top 30 rf selection
+# get rmse 1.489 for ensembling -- top 50 rf/xgb selection -- finally selected 35 raw features..
+# get rmse 1.124 (prob training rmse.. should prob be ~1.39 test rmse) for ensembling -- top 120 rf/xgb selection -- top feas + ensemble features at ensemble round
+
+# get rmse 1.089339 (training rmse) -- top 200 rf/xgb (should prob be ~1.347 test rmse) for ensembling -- top 200 rf/xgb selection - 10 folds -- currently best score: 0.67 Public Leaderboard
+
+# 7 ensemble:
+
 ```
 
 ### refit all level 1 models to prepare for predictions on holdout ("real test")
@@ -214,7 +256,23 @@ lm_best <- my_lmstep(train_1_small_2, init_features_1, cur_response_1)
 # -----------------------------------------------------------
 # 5. ridge
 ridge_best <- my_ridge(train_1_small_2, init_features_1, cur_response_1)
-Sys.time()
+
+# -----------------------------------------------------------
+# 6. SVM Linear
+SVMLinear_best <- my_svmLinear(train_1_small_2, init_features_1, cur_response_1)
+
+# -----------------------------------------------------------
+# 7. LightGBM
+lgb_dtrain <- lgb.Dataset(data = as.matrix(train_1_small_2[,init_features_1]), 
+                          label = as.matrix(train_1_small_2[,cur_response_1]))
+lgb_best <- my_lgb(lgb_dtrain)
+
+# -----------------------------------------------------------
+# 8. Neural Network
+### TO BE FILLED HERE  
+
+
+Sys.time()  
 ```
 
 # -----------------------------------------------------------
@@ -246,9 +304,10 @@ for (each in all_test_col){
 
 ## now predict stuff
 ```{r}
-## for xgboost in training initial round
+## for xgboost/lgb in training initial round
 test_r1 <- rw_fea_engineering(test[,intersect_features_1]) # generate the row-wise features for test
 dtest_r1 <- xgb.DMatrix(as.matrix(test_r1[, init_features_1]))
+lgb_dtest_r1 <- as.matrix(test_r1[,intersect_features_1])
 
 ## individual results round 1
 test_ind_res <- test %>% 
@@ -256,7 +315,11 @@ test_ind_res <- test %>%
          rf = predict(rf_best, newdata = test_r1),
          knn = predict(knn_best, newdata = test_r1),
          lm = predict(lm_best, newdata = test_r1),
-         ridge = predict(ridge_best, newdata = test_r1))
+         ridge = predict(ridge_best, newdata = test_r1),
+         svmLinear = predict(SVMLinear_best, newdata = test_r1),
+         lgb = predict(lgb_best, lgb_dtest_r1)# ,
+         # nnet ## to be filled here
+         )
 
 ## get ensemble results using meta model
 dtest_ens <- xgb.DMatrix(as.matrix(test_ind_res[, ensemble_features_1]))
@@ -268,6 +331,9 @@ test_ens <- test_ind_res %>%
          knn,
          lm,
          ridge,
+         svmLinear,
+         lgb,
+         # nnet,
          #....,
          target) # for view
 
@@ -288,7 +354,7 @@ final_out <- bind_rows(out, test_leaky_out)
 
 ## write out
 ```{r}
-write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainwhole_top30rf_5ens_notoverfit.csv", 
+write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainwhole_top200rfxgb_7ens_notoverfit.csv",
           row.names = FALSE)
 ```
 
