@@ -235,11 +235,11 @@ ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "lgb", "
 ### xgb
 dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
                          label=as.matrix(train_for_ens[,cur_response_1])) # still same target
-xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.002, es = 5) 
+xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.005, es = 10) 
 ### lightgbm
 lgb_dtrain_ens <- lgb.Dataset(data = as.matrix(train_for_ens[,ensemble_features_1]),
                           label = as.matrix(train_for_ens[,cur_response_1]))
-lgb_best_ens <- my_lgb(lgb_dtrain_ens)
+lgb_best_ens <- my_lgb(lgb_dtrain_ens, lr = 0.005, es = 10)
 
 Sys.time()
 
