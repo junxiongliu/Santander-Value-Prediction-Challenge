@@ -223,17 +223,23 @@ Sys.time()
 
 ```
 
-### build the "meta" level 2 ensemble model with xgboost from meta-data
+### build the "meta" level 2 ensemble model with xgboost and lightgbm from meta-data
 ```{r}
 # get the level 1 prediction results and very top features from original selection for level 2 ensemble
 top_feas <- base::intersect(rf_top_feas, xgb_top_feas)
 
 ### may add row-wise feature engineering for this layer in the future
 
-ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "lgb", "compiled_leak")) #,...), "SVMLinear"
+ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "lgb", "compiled_leak")) 
+#,...), "SVMLinear"
 dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
                          label=as.matrix(train_for_ens[,cur_response_1])) # still same target
 xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.002, es = 5) 
+
+lgb_dtrain_ens <- lgb.Dataset(data = as.matrix(train_for_ens[,ensemble_features_1]),
+                          label = as.matrix(train_for_ens[,cur_response_1]))
+lgb_best_ens <- my_lgb(lgb_dtrain_ens)
+
 Sys.time()
 
 ## 6 ensembles (svm not working)
@@ -344,9 +350,16 @@ test_ind_res <- test %>%
          )
 
 ## get ensemble results using meta model
+# weights of trusting each
+xgb_weight <- 0.2 
+lgb_weight <- 0.8
+
 dtest_ens <- xgb.DMatrix(as.matrix(test_ind_res[, ensemble_features_1]))
+lgb_dtest_ens <- as.matrix(test_ind_res[, ensemble_features_1])
 test_ens <- test_ind_res %>%
-  mutate(target = predict(xgb_best_ens, dtest_ens)) %>% 
+  mutate(xgb_ens = predict(xgb_best_ens, dtest_ens),
+         lgb_ens = predict(lgb_best, lgb_dtest_ens),
+         target = xgb_weight*xgb_ens + lgb_weight*lgb_ens) %>% 
   select(ID, 
          xgb,
          rf,
@@ -357,6 +370,8 @@ test_ens <- test_ind_res %>%
          lgb,
          # nnet,
          compiled_leak,
+         xgb_ens,
+         lgb_ens,
          target) # for view
 
 ## exponential to get final results
