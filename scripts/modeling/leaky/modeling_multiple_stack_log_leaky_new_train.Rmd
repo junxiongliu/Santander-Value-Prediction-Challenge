@@ -17,7 +17,7 @@ if (length(install.me) >= 1) install.packages(install.me, repos = "http://cran.u
 lapply(mypacks, library, character.only=TRUE)  # load all packages
 ```
 
-# New way of stacking, training (at level 2) includes the log-leaky column
+# New way of stacking, training from start (level 1) includes the compiled_leak (log-leaky) column
 
 # "horizontal" stacking of different models after random forest variable selection
 ## xgboost (done)
@@ -69,8 +69,8 @@ Sys.time()
 ## Response-related and fit
 ### general initialization (careful about too many features at this step) -- can result in slow training
 ```{r}
-# num_top <- 50 # number of top features
-num_top <- 100 # number of top features
+num_top <- 50 # number of top features
+# num_top <- 100 # number of top features
 # num_top <- 120
 # num_top <- 200
 # num_top <- 300 # updated
@@ -119,8 +119,8 @@ train_1_small_2 <- train_1_small_2 %>%
 
 # join
 train_1_small_2 <- train_1_small_2 %>% 
-  left_join(train_leak_cleaned, by = "row_num") %>% 
-  select(-row_num)
+  left_join(train_leak_cleaned, by = "row_num")
+train_1_small_2 <- train_1_small_2 %>% select(-row_num)
 
 # get final features (this includes compiled_leak)
 init_features_1 <- base::setdiff(names(train_1_small_2), c(cur_response_1))
@@ -132,8 +132,8 @@ rm(train_1, train_1_small_1, train_gc_s1, train_leak_cleaned, train_leak_whole)
 ### Divide the training data into multiple folds (for "out-of-fold" prediction and stacking) and prepare for out-of-fold predictions for level 1 models
 ```{r}
 # num_folds <- 2
-# num_folds <- 5
-num_folds <- 10
+num_folds <- 5
+# num_folds <- 10
 # num_methods <- 7 # number of methods for ensembling
 num_methods <- 6 # number of methods for ensembling
 method_names <- c("xgb", "rf", "knn", "lm", "ridge", "lgb") # , "SVMLinear"
@@ -367,7 +367,7 @@ out <- test_ens %>%
 
 ## write out
 ```{r}
-write.csv(final_out, "../../../data/predictions/lk_predictions/train_with_leak/lk_top100rfxgb_6ens_lv1.csv",
+write.csv(final_out, "../../../data/predictions/lk_predictions/train_with_leak/lk_top50rfxgb_6ens_lv1.csv",
           row.names = FALSE)
 ```
 
