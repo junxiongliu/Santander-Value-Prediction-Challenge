@@ -317,7 +317,7 @@ for (each in all_test_col){
 # generate the row-wise features for test and join leaks
 ```{r}
 ## for xgboost/lgb in training initial round
-test <- rw_fea_engineering(test[,intersect_features_1])
+test_r1 <- rw_fea_engineering(test[,intersect_features_1])
 
 # Then
 test_leak_cleaned <- test_leak_whole %>% 
@@ -326,16 +326,19 @@ test_leak_cleaned <- test_leak_whole %>%
   select(row_num, compiled_leak) %>%
   replace(.,is.na(.), -1)
 
-test <- test %>%
-  mutate(row_num = row_number())
+test_r1 <- test_r1 %>% mutate(row_num = row_number())
+test <- test %>% mutate(row_num = row_number())
 
-# join and get compiled_leak
-test_r1 <- left_join(test, test_leak_cleaned, by = "row_num")
+# join and get compiled_leak 
+test_r1 <- left_join(test_r1, test_leak_cleaned, by = "row_num")
+test_r1 <- test_r1 %>% select(-row_num)
+test <- left_join(test, test_leak_cleaned, by = "row_num")
+test <- test %>% select(-row_num)
 ```
 
 ## now predict stuff
 ```{r}
-dtest_r1 <- xgb.DMatrix(as.matrix(test_r1[, init_features_1]))
+dtest_r1 <- xgb.DMatrix(as.matrix(test_r1[, init_features_1])) 
 lgb_dtest_r1 <- as.matrix(test_r1[,init_features_1])
 
 ## individual results round 1
@@ -359,7 +362,7 @@ dtest_ens <- xgb.DMatrix(as.matrix(test_ind_res[, ensemble_features_1]))
 lgb_dtest_ens <- as.matrix(test_ind_res[, ensemble_features_1])
 test_ens <- test_ind_res %>%
   mutate(xgb_ens = predict(xgb_best_ens, dtest_ens),
-         lgb_ens = predict(lgb_best, lgb_dtest_ens),
+         lgb_ens = predict(lgb_best_ens, lgb_dtest_ens),
          target = xgb_weight*xgb_ens + lgb_weight*lgb_ens) %>% 
   select(ID, 
          xgb,
@@ -375,6 +378,8 @@ test_ens <- test_ind_res %>%
          lgb_ens,
          target) # for view
 
+### potential: here still have last-minute chance to say, change the target to compiled leak if compiled leak != -1
+
 ## exponential to get final results
 out <- test_ens %>% 
   mutate(target = exp(target)) %>% # get the exponential
@@ -383,7 +388,7 @@ out <- test_ens %>%
 
 ## write out
 ```{r}
-write.csv(final_out, "../../../data/predictions/lk_predictions/train_with_leak/lk_top50rfxgb_6ens_lv1.csv",
+write.csv(out, "../../../data/predictions/lk_predictions/train_with_leak/lk_top50rfxgb_6ens_lv1.csv",
           row.names = FALSE)
 ```
 
