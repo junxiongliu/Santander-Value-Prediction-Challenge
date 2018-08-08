@@ -229,13 +229,14 @@ Sys.time()
 top_feas <- base::intersect(rf_top_feas, xgb_top_feas)
 
 ### may add row-wise feature engineering for this layer in the future
-
 ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "lgb", "compiled_leak")) 
 #,...), "SVMLinear"
+
+### xgb
 dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
                          label=as.matrix(train_for_ens[,cur_response_1])) # still same target
 xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.002, es = 5) 
-
+### lightgbm
 lgb_dtrain_ens <- lgb.Dataset(data = as.matrix(train_for_ens[,ensemble_features_1]),
                           label = as.matrix(train_for_ens[,cur_response_1]))
 lgb_best_ens <- my_lgb(lgb_dtrain_ens)
@@ -350,9 +351,9 @@ test_ind_res <- test %>%
          )
 
 ## get ensemble results using meta model
-# weights of trusting each
-xgb_weight <- 0.2 
-lgb_weight <- 0.8
+# weights of trusting each of xgboost and lightgbm
+xgb_weight <- 0.5 
+lgb_weight <- 0.5
 
 dtest_ens <- xgb.DMatrix(as.matrix(test_ind_res[, ensemble_features_1]))
 lgb_dtest_ens <- as.matrix(test_ind_res[, ensemble_features_1])
