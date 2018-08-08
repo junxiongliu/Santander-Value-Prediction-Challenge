@@ -17,7 +17,7 @@ if (length(install.me) >= 1) install.packages(install.me, repos = "http://cran.u
 lapply(mypacks, library, character.only=TRUE)  # load all packages
 ```
 
-# New way of stacking (08/05 update)
+# New way of stacking, training (at level 2) includes the log-leaky column
 
 # "horizontal" stacking of different models after random forest variable selection
 ## xgboost (done)
@@ -45,8 +45,7 @@ source("../help_functions/modeling_functions.R")
 ```{r}
 Sys.time()
 
-# just use only non-leaky portion to train and predict non-leaky test
-# train <- read.csv("../../../data/cleaned/leaky_combined_0730/train_noleak.csv")
+train_leak_whole <- read.csv("../../../data/leaked/0730_jiazhen/train_leak.csv")
 
 # still use the whole "train" to train.
 train <- read.csv("../../../data/raw/train.csv")
@@ -120,8 +119,9 @@ rm(train_1, train_1_small_1, train_gc_s1)
 # num_folds <- 2
 # num_folds <- 5
 num_folds <- 10
-num_methods <- 7 # number of methods for ensembling
-method_names <- c("xgb", "rf", "knn", "lm", "ridge", "SVMLinear", "lgb")
+# num_methods <- 7 # number of methods for ensembling
+num_methods <- 6 # number of methods for ensembling
+method_names <- c("xgb", "rf", "knn", "lm", "ridge", "lgb") # , "SVMLinear"
 
 # num_methods <- 1 # number of methods for ensembling
 #method_names <- c("nnet")
@@ -176,9 +176,9 @@ for (i in 1:num_folds){ # each slice serve as testing
   test_slice <- test_slice %>% mutate(ridge = predict(ridge_best, newdata = test_slice))
   # 
   # -----------------------------------------------------------
-  # 6. SVM
-  SVMLinear_best <- my_svmLinear(train_slice, init_features_1, cur_response_1)
-  test_slice <- test_slice %>% mutate(SVMLinear = predict(SVMLinear_best, newdata = test_slice))
+  # 6. SVM (currently disabled.. not working)
+  # SVMLinear_best <- my_svmLinear(train_slice, init_features_1, cur_response_1)
+  # test_slice <- test_slice %>% mutate(SVMLinear = predict(SVMLinear_best, newdata = test_slice))
   
   # -----------------------------------------------------------
   # 7. LightGBM
@@ -208,6 +208,26 @@ Sys.time()
 
 ```
 
+# combine train_leak_whole with train_for_ens
+```{r}
+train_leak_cleaned <- train_leak_whole %>% 
+  mutate(compiled_leak = log(compiled_leak),
+         row_num = row_number()) %>%
+  select(row_num, compiled_leak) %>%
+  replace(.,is.na(.), -1)
+
+all_ind_last_round <- c()
+for (i in 1:length(ind)){
+  all_ind_last_round <- c(all_ind_last_round, ind[[i]])
+}
+
+train_for_ens <- train_for_ens %>%
+  mutate(row_num = all_ind_last_round)
+
+# join
+train_for_ens <- left_join(train_for_ens, train_leak_cleaned, by = "row_num")
+```
+
 ### build the "meta" level 2 ensemble model with xgboost from meta-data
 ```{r}
 # get the level 1 prediction results and very top features from original selection for level 2 ensemble
@@ -215,23 +235,13 @@ top_feas <- base::intersect(rf_top_feas, xgb_top_feas)
 
 ### may add row-wise feature engineering for this layer in the future
 
-
-ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "SVMLinear", "lgb")) #,...)
+ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "lgb", "compiled_leak")) #,...), "SVMLinear"
 dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
                          label=as.matrix(train_for_ens[,cur_response_1])) # still same target
 xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.002, es = 5) 
 Sys.time()
 
-## 5 fold 5 ensemble:
-# get rmse 1.421 for ensembling -- top 30 rf selection
-# get rmse 1.489 for ensembling -- top 50 rf/xgb selection -- finally selected 35 raw features..
-# get rmse 1.124 (prob training rmse.. should prob be ~1.39 test rmse) for ensembling -- top 120 rf/xgb selection -- top feas + ensemble features at ensemble round
-
-# get rmse 1.089339 (training rmse) -- top 200 rf/xgb (should prob be ~1.347 test rmse) for ensembling -- top 200 rf/xgb selection - 10 folds -- currently best score: 0.67 Public Leaderboard
-
-# 7 ensemble: 
-# 200 feas: 1.085869 (training rmse) -- same parameter as above
-# 300 feas: 1.0617 (training rmse) -- same param as above
+## 6 ensembles (svm not working)
 ```
 
 ### refit all level 1 models to prepare for predictions on holdout ("real test")
@@ -259,7 +269,7 @@ ridge_best <- my_ridge(train_1_small_2, init_features_1, cur_response_1)
 
 # -----------------------------------------------------------
 # 6. SVM Linear
-SVMLinear_best <- my_svmLinear(train_1_small_2, init_features_1, cur_response_1)
+# SVMLinear_best <- my_svmLinear(train_1_small_2, init_features_1, cur_response_1)
 
 # -----------------------------------------------------------
 # 7. LightGBM
@@ -280,9 +290,27 @@ Sys.time()
 
 ## Read in the test set and predict
 ```{r}
-test <- read_csv("../../../data/cleaned/leaky_combined_0730/test_noleak.csv")
-test_leaky <- read_csv("../../../data/cleaned/leaky_combined_0730/test_leak.csv")
+test_leak_whole <- read.csv("../../../data/leaked/0730_jiazhen/test_leak.csv")
+
+# still use the whole "train" to train.
+test <- read_csv("../../../data/raw/test.csv")
 ```
+
+## manipulate and combine the test set
+```{r}
+test_leak_cleaned <- test_leak_whole %>% 
+  mutate(compiled_leak = log(compiled_leak),
+         row_num = row_number()) %>%
+  select(row_num, compiled_leak) %>%
+  replace(.,is.na(.), -1)
+
+test <- test %>%
+  mutate(row_num = row_number())
+
+# join
+test <- left_join(test, test_leak_cleaned, by = "row_num")
+```
+
 
 ## let the test column match the train column
 ### note: if the test column starts with a number, will add an x to let it match the train columns
@@ -316,7 +344,7 @@ test_ind_res <- test %>%
          knn = predict(knn_best, newdata = test_r1),
          lm = predict(lm_best, newdata = test_r1),
          ridge = predict(ridge_best, newdata = test_r1),
-         SVMLinear = predict(SVMLinear_best, newdata = test_r1),
+         # SVMLinear = predict(SVMLinear_best, newdata = test_r1),
          lgb = predict(lgb_best, lgb_dtest_r1)# ,
          # nnet ## to be filled here
          )
@@ -331,10 +359,10 @@ test_ens <- test_ind_res %>%
          knn,
          lm,
          ridge,
-         SVMLinear,
+         # SVMLinear,
          lgb,
          # nnet,
-         #....,
+         compiled_leak,
          target) # for view
 
 ## exponential to get final results
@@ -343,18 +371,9 @@ out <- test_ens %>%
   select(ID, target)
 ```
 
-## combine with test_leaky
-```{r}
-test_leaky_out <- test_leaky %>% 
-  select(ID, compiled_leak) %>%
-  rename(target = compiled_leak)
-
-final_out <- bind_rows(out, test_leaky_out)
-```
-
 ## write out
 ```{r}
-write.csv(final_out, "../../../data/predictions/lk_predictions/lk_trainwhole_top300rfxgb_7ens_notoverfit.csv",
+write.csv(final_out, "../../../data/predictions/lk_predictions/train_with_leak/lk_top100rfxgb_6ens_lv1.csv",
           row.names = FALSE)
 ```
 
