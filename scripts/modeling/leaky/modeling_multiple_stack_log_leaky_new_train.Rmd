@@ -44,9 +44,6 @@ source("../help_functions/modeling_functions.R")
 ## Read in train data
 ```{r}
 Sys.time()
-
-train_leak_whole <- read.csv("../../../data/leaked/0730_jiazhen/train_leak.csv")
-
 # still use the whole "train" to train.
 train <- read.csv("../../../data/raw/train.csv")
 
@@ -54,7 +51,10 @@ train_noid <- train %>%
   select(-ID) %>%
   mutate(target = log(target))
 Sys.time()
+
+train_leak_whole <- read.csv("../../../data/leaked/0730_jiazhen/train_leak.csv")
 ```
+
 
 #-------------------------------------------------------
 ## General Cleaning: Data Quality/Unsupervised method (non-response related)
@@ -70,10 +70,10 @@ Sys.time()
 ### general initialization (careful about too many features at this step) -- can result in slow training
 ```{r}
 # num_top <- 50 # number of top features
-# num_top <- 100 # number of top features
+num_top <- 100 # number of top features
 # num_top <- 120
 # num_top <- 200
-num_top <- 300 # updated
+# num_top <- 300 # updated
 # num_top <- 30 
 train_1 <- train_gc_s1
 ```
@@ -103,15 +103,30 @@ intersect_features_1 <- unique(intersect_features_1)
 train_1_small_1 <- train_1 %>% select(c(intersect_features_1, cur_response_1))
 ```
 
-### row-wise feature engineering
+### row-wise feature engineering and combine the training with leak
 ```{r}
 # row-wise feature engineering
 train_1_small_2 <- rw_fea_engineering(train_1_small_1, cur_response_1)
-# get final features
+
+train_leak_cleaned <- train_leak_whole %>% 
+  mutate(compiled_leak = log(compiled_leak),
+         row_num = row_number()) %>%
+  select(row_num, compiled_leak) %>%
+  replace(.,is.na(.), -1)
+
+train_1_small_2 <- train_1_small_2 %>%
+  mutate(row_num = row_number())
+
+# join
+train_1_small_2 <- train_1_small_2 %>% 
+  left_join(train_leak_cleaned, by = "row_num") %>% 
+  select(-row_num)
+
+# get final features (this includes compiled_leak)
 init_features_1 <- base::setdiff(names(train_1_small_2), c(cur_response_1))
 Sys.time()
 
-rm(train_1, train_1_small_1, train_gc_s1)
+rm(train_1, train_1_small_1, train_gc_s1, train_leak_cleaned, train_leak_whole)
 ```
 
 ### Divide the training data into multiple folds (for "out-of-fold" prediction and stacking) and prepare for out-of-fold predictions for level 1 models
@@ -208,26 +223,6 @@ Sys.time()
 
 ```
 
-# combine train_leak_whole with train_for_ens
-```{r}
-train_leak_cleaned <- train_leak_whole %>% 
-  mutate(compiled_leak = log(compiled_leak),
-         row_num = row_number()) %>%
-  select(row_num, compiled_leak) %>%
-  replace(.,is.na(.), -1)
-
-all_ind_last_round <- c()
-for (i in 1:length(ind)){
-  all_ind_last_round <- c(all_ind_last_round, ind[[i]])
-}
-
-train_for_ens <- train_for_ens %>%
-  mutate(row_num = all_ind_last_round)
-
-# join
-train_for_ens <- left_join(train_for_ens, train_leak_cleaned, by = "row_num")
-```
-
 ### build the "meta" level 2 ensemble model with xgboost from meta-data
 ```{r}
 # get the level 1 prediction results and very top features from original selection for level 2 ensemble
@@ -291,26 +286,8 @@ Sys.time()
 ## Read in the test set and predict
 ```{r}
 test_leak_whole <- read.csv("../../../data/leaked/0730_jiazhen/test_leak.csv")
-
-# still use the whole "train" to train.
 test <- read_csv("../../../data/raw/test.csv")
 ```
-
-## manipulate and combine the test set
-```{r}
-test_leak_cleaned <- test_leak_whole %>% 
-  mutate(compiled_leak = log(compiled_leak),
-         row_num = row_number()) %>%
-  select(row_num, compiled_leak) %>%
-  replace(.,is.na(.), -1)
-
-test <- test %>%
-  mutate(row_num = row_number())
-
-# join
-test <- left_join(test, test_leak_cleaned, by = "row_num")
-```
-
 
 ## let the test column match the train column
 ### note: if the test column starts with a number, will add an x to let it match the train columns
@@ -330,12 +307,29 @@ for (each in all_test_col){
 }
 ```
 
-## now predict stuff
+# generate the row-wise features for test and join leaks
 ```{r}
 ## for xgboost/lgb in training initial round
-test_r1 <- rw_fea_engineering(test[,intersect_features_1]) # generate the row-wise features for test
+test <- rw_fea_engineering(test[,intersect_features_1])
+
+# Then
+test_leak_cleaned <- test_leak_whole %>% 
+  mutate(compiled_leak = log(compiled_leak),
+         row_num = row_number()) %>%
+  select(row_num, compiled_leak) %>%
+  replace(.,is.na(.), -1)
+
+test <- test %>%
+  mutate(row_num = row_number())
+
+# join and get compiled_leak
+test_r1 <- left_join(test, test_leak_cleaned, by = "row_num")
+```
+
+## now predict stuff
+```{r}
 dtest_r1 <- xgb.DMatrix(as.matrix(test_r1[, init_features_1]))
-lgb_dtest_r1 <- as.matrix(test_r1[,intersect_features_1])
+lgb_dtest_r1 <- as.matrix(test_r1[,init_features_1])
 
 ## individual results round 1
 test_ind_res <- test %>% 

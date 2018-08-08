@@ -307,7 +307,7 @@ for (each in all_test_col){
 ## for xgboost/lgb in training initial round
 test_r1 <- rw_fea_engineering(test[,intersect_features_1]) # generate the row-wise features for test
 dtest_r1 <- xgb.DMatrix(as.matrix(test_r1[, init_features_1]))
-lgb_dtest_r1 <- as.matrix(test_r1[,intersect_features_1])
+lgb_dtest_r1 <- as.matrix(test_r1[,init_features_1])
 
 ## individual results round 1
 test_ind_res <- test %>% 
