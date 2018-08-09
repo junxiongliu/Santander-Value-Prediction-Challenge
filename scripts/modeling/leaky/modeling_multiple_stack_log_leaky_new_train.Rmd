@@ -69,11 +69,11 @@ Sys.time()
 ## Response-related and fit
 ### general initialization (careful about too many features at this step) -- can result in slow training
 ```{r}
-num_top <- 50 # number of top features
+# num_top <- 50 # number of top features
 # num_top <- 100 # number of top features
 # num_top <- 120
 # num_top <- 200
-# num_top <- 300 # updated
+num_top <- 300 # updated
 # num_top <- 30 
 train_1 <- train_gc_s1
 ```
@@ -106,7 +106,7 @@ train_1_small_1 <- train_1 %>% select(c(intersect_features_1, cur_response_1))
 ### row-wise feature engineering and combine the training with leak
 ```{r}
 # row-wise feature engineering
-train_1_small_2 <- rw_fea_engineering(train_1_small_1, cur_response_1)
+train_1_small_2 <- rw_fea_engineering(train_1_small_1, cur_response_1) #### This can prob go to previous section to find more leaked pattern! and those features can always be kept in any modeling!
 
 train_leak_cleaned <- train_leak_whole %>% 
   mutate(compiled_leak = log(compiled_leak),
@@ -132,8 +132,8 @@ rm(train_1, train_1_small_1, train_gc_s1, train_leak_cleaned, train_leak_whole)
 ### Divide the training data into multiple folds (for "out-of-fold" prediction and stacking) and prepare for out-of-fold predictions for level 1 models
 ```{r}
 # num_folds <- 2
-num_folds <- 5
-# num_folds <- 10
+# num_folds <- 5
+num_folds <- 10
 # num_methods <- 7 # number of methods for ensembling
 num_methods <- 6 # number of methods for ensembling
 method_names <- c("xgb", "rf", "knn", "lm", "ridge", "lgb") # , "SVMLinear"
@@ -355,8 +355,8 @@ test_ind_res <- test %>%
 
 ## get ensemble results using meta model
 # weights of trusting each of xgboost and lightgbm
-xgb_weight <- 0.5 
-lgb_weight <- 0.5
+xgb_weight <- 0 
+lgb_weight <- 1
 
 dtest_ens <- xgb.DMatrix(as.matrix(test_ind_res[, ensemble_features_1]))
 lgb_dtest_ens <- as.matrix(test_ind_res[, ensemble_features_1])
@@ -378,7 +378,10 @@ test_ens <- test_ind_res %>%
          lgb_ens,
          target) # for view
 
-### potential: here still have last-minute chance to say, change the target to compiled leak if compiled leak != -1
+### change the target to compiled leak if compiled leak != -1
+# test_ens <- test_ens %>%
+#  mutate(target = ifelse(compiled_leak != -1, compiled_leak, target))
+
 
 ## exponential to get final results
 out <- test_ens %>% 
@@ -388,7 +391,7 @@ out <- test_ens %>%
 
 ## write out
 ```{r}
-write.csv(out, "../../../data/predictions/lk_predictions/train_with_leak/lk_top50rfxgb_6ens_lv1.csv",
+write.csv(out, "../../../data/predictions/lk_predictions/train_with_leak/lk_top300rfxgb_6ens_lv1_alllgblayer2.csv",
           row.names = FALSE)
 ```
 
