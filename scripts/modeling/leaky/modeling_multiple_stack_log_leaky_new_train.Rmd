@@ -232,16 +232,26 @@ top_feas <- base::intersect(rf_top_feas, xgb_top_feas)
 ensemble_features_1 <- c(top_feas, c("xgb", "rf", "knn", "lm", "ridge", "lgb", "compiled_leak")) 
 #,...), "SVMLinear"
 
+##-------------------------------------------------------------------------
 ### xgb
-dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
-                         label=as.matrix(train_for_ens[,cur_response_1])) # still same target
-xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.005, es = 10) 
-### lightgbm
-lgb_dtrain_ens <- lgb.Dataset(data = as.matrix(train_for_ens[,ensemble_features_1]),
-                          label = as.matrix(train_for_ens[,cur_response_1]))
-lgb_best_ens <- my_lgb(lgb_dtrain_ens, lr = 0.005, es = 10)
+# dtrain_ens <- xgb.DMatrix(as.matrix(train_for_ens[, ensemble_features_1]), 
+#                          label=as.matrix(train_for_ens[,cur_response_1])) # still same target
+# xgb_best_ens <- my_xgb(dtrain_ens, depth = 100000, lr = 0.005, es = 10) 
+# ### lightgbm
+# lgb_dtrain_ens <- lgb.Dataset(data = as.matrix(train_for_ens[,ensemble_features_1]),
+#                           label = as.matrix(train_for_ens[,cur_response_1]))
+# lgb_best_ens <- my_lgb(lgb_dtrain_ens, lr = 0.005, es = 10)
+# 
+# Sys.time()
+##-------------------------------------------------------------------------
 
-Sys.time()
+# ensemble with lm
+train_for_ens_new <- train_for_ens %>% select(xgb:lgb, target)
+lm_ens <- lm(target~., data = train_for_ens_new)
+summary(lm_ens)
+
+lm_ens_step <- step(lm_ens) # step selected
+summary(lm_ens_step)
 
 ## 6 ensembles (svm not working)
 ```
@@ -286,6 +296,10 @@ lgb_best <- my_lgb(lgb_dtrain)
 
 Sys.time()  
 ```
+
+
+#temp comment: runned above, change ensemble method
+
 
 # -----------------------------------------------------------
 ## Now predictions on the holdout (real "test"):
@@ -355,15 +369,16 @@ test_ind_res <- test %>%
 
 ## get ensemble results using meta model
 # weights of trusting each of xgboost and lightgbm
-xgb_weight <- 0 
-lgb_weight <- 1
-
-dtest_ens <- xgb.DMatrix(as.matrix(test_ind_res[, ensemble_features_1]))
-lgb_dtest_ens <- as.matrix(test_ind_res[, ensemble_features_1])
+# xgb_weight <- 0 
+# lgb_weight <- 1
+# 
+# dtest_ens <- xgb.DMatrix(as.matrix(test_ind_res[, ensemble_features_1]))
+# lgb_dtest_ens <- as.matrix(test_ind_res[, ensemble_features_1])
 test_ens <- test_ind_res %>%
-  mutate(xgb_ens = predict(xgb_best_ens, dtest_ens),
-         lgb_ens = predict(lgb_best_ens, lgb_dtest_ens),
-         target = xgb_weight*xgb_ens + lgb_weight*lgb_ens) %>% 
+  # mutate(xgb_ens = predict(xgb_best_ens, dtest_ens),
+  #        lgb_ens = predict(lgb_best_ens, lgb_dtest_ens),
+  #        target = xgb_weight*xgb_ens + lgb_weight*lgb_ens) %>% 
+  mutate(target = predict(lm_ens_step, newdata = test_ind_res)) %>%
   select(ID, 
          xgb,
          rf,
@@ -374,8 +389,8 @@ test_ens <- test_ind_res %>%
          lgb,
          # nnet,
          compiled_leak,
-         xgb_ens,
-         lgb_ens,
+         # xgb_ens,
+         # lgb_ens,
          target) # for view
 
 ### change the target to compiled leak if compiled leak != -1
@@ -391,7 +406,7 @@ out <- test_ens %>%
 
 ## write out
 ```{r}
-write.csv(out, "../../../data/predictions/lk_predictions/train_with_leak/lk_top300rfxgb_6ens_lv1_alllgblayer2.csv",
+write.csv(out, "../../../data/predictions/lk_predictions/train_with_leak/lk_top300rfxgb_6ens_lv1_lmsteplayer2.csv",
           row.names = FALSE)
 ```
 
