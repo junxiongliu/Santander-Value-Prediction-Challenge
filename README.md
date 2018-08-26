@@ -10,5 +10,5 @@ Our team (Deep Cross Validated Stacking) is ranked at top 28% among 4591 teams a
 
 ## File Structure
 * `data` folder aims to contain the raw and cleaned data.
-* `scripts/leak_combination` folder contains the scripts to combine "leak" identified by other participants during the competition
-* `scripts/modeling` folder contains the scripts and functions to reduce dimensions and run the models.
+* `scripts/leak_combination` folder contains the scripts to combine "leak" identified by other participants during the competition.
+* `scripts/modeling` folder contains the scripts and functions to reduce dimensions and build models in both "leaky" or "non-leaky" datasets. The `modeling_multiple_stack_log_leaky_new_train.Rmd` file in `leaky` folder contains our final best ensemble model.
